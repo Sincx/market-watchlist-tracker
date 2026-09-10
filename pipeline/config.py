@@ -251,9 +251,9 @@ GROUPS = {
         },
         # stockanalysis.com exchange prefix for history pages
         "sa_prefix_map": {
-            "NWG": "lon", "EDEN": "epa", "SAP": "xtra", "ADYEN": "ams",
+            "NWG": "lon", "EDEN": "epa", "SAP": "etr", "ADYEN": "ams",
             "COLO-B": "cse", "PRX": "ams", "EKTA-B": "sto", "GIVN": "swx",
-            "AKZA": "ams", "KYGA": "ise", "FCT": "bit", "ALV": "xtra",
+            "AKZA": "ams", "KYGA": "ise", "FCT": "bit", "ALV": "etr",
             "MC": "epa", "ABI": "ebr",
         },
     },

@@ -56,14 +56,23 @@ COUNTRY_TO_YAHOO_SUFFIX = {
 }
 
 # Country -> stockanalysis.com's URL exchange-prefix segment (quote/<prefix>/<ticker>),
-# for fundamentals.py's fetch_eu(). Confirmed entries carried over from config.py's
-# existing Morningstar-EU sa_prefix_map (already verified working there); entries
-# marked unconfirmed are a best guess from stockanalysis.com's documented exchange
-# list and haven't been spot-checked against a real STOXX 600 fetch yet — left
-# unmapped (None) rather than guessed wrong would silently 404 fundamentals.py's
-# scrape, so these are included but worth verifying on first real use.
+# for fundamentals.py's fetch_eu(). Entries were carried over from config.py's
+# existing Morningstar-EU sa_prefix_map on the assumption it had been verified —
+# it hadn't, for Germany at least: "xtra" 404s on every real ticker (SAP, ALV,
+# ADS, BAS, ...), the correct prefix is "etr". Found 2026-09-10 when 62/62 active
+# German STOXX 600 rows had zero fundamentals coverage, a 100% failure rate that
+# stood out against every other country's partial (ticker-not-covered, expected)
+# gaps. Fixed here and in config.py; this had presumably been silently broken
+# for the original Morningstar-EU group's SAP/ALV rows too, pre-dating the Turso
+# migration entirely. Lesson: "carried over from an existing map" is not the
+# same as "verified" — spot-check each country for real before trusting it.
+# Entries marked unconfirmed below are a best guess from stockanalysis.com's
+# documented exchange list and haven't been spot-checked against a real STOXX
+# 600 fetch yet — left unmapped (None) rather than guessed wrong would silently
+# 404 fundamentals.py's scrape, so these are included but worth verifying on
+# first real use.
 COUNTRY_TO_SA_PREFIX = {
-    "United Kingdom": "lon", "France": "epa", "Germany": "xtra", "Netherlands": "ams",
+    "United Kingdom": "lon", "France": "epa", "Germany": "etr", "Netherlands": "ams",
     "Denmark": "cse", "Sweden": "sto", "Switzerland": "swx", "Ireland": "ise",
     "Italy": "bit", "Belgium": "ebr",
     # Unconfirmed — stockanalysis.com's documented prefixes, not yet spot-checked:
