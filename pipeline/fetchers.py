@@ -33,10 +33,21 @@ class StaleDataError(RuntimeError):
     pass
 
 
+# NYSE/NASDAQ full-day closures. Extend this list yearly.
+_US_MARKET_HOLIDAYS = {
+    # 2025
+    "2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18", "2025-05-26",
+    "2025-06-19", "2025-07-04", "2025-09-01", "2025-11-27", "2025-12-25",
+    # 2026
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+    "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+}
+
+
 def _expected_last_trading_day() -> str:
-    """Return the last weekday strictly before today as YYYY-MM-DD."""
+    """Return the last US market trading day strictly before today as YYYY-MM-DD."""
     d = _date.today() - timedelta(days=1)
-    while d.weekday() >= 5:
+    while d.weekday() >= 5 or str(d) in _US_MARKET_HOLIDAYS:
         d -= timedelta(days=1)
     return str(d)
 

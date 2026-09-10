@@ -1,13 +1,17 @@
 """
-Fundamental data scraper from stockanalysis.com (primary) with Shibui Finance MCP backup.
+Fundamental data: FMP free tier (US, opportunistic) + stockanalysis.com scraper
+(primary) with Shibui Finance MCP backup (US last resort).
 Returns PE, EPS growth, revenue growth, dividend yield, market cap, sector, valuation band.
 """
 
 import json
 import re
+import time
 import requests
 import urllib3
 from bs4 import BeautifulSoup
+
+import fmp as _fmp
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -20,10 +24,34 @@ _HEADERS = {
     )
 }
 
+# stockanalysis.com rate limit — found the hard way 2026-09-10: a full-universe
+# fundamentals sweep (2 unthrottled requests/ticker) sailed through the first
+# ~550 tickers at 100% success, then hit a 429 that never recovered for the
+# rest of that run (785/1353 tickers lost). A fixed minimum gap between
+# requests avoids ever triggering the block, same pattern as Polygon's
+# _POLYGON_MIN_GAP in fetchers.py. One retry-after-backoff on an actual 429,
+# since the block clearly has some cooldown rather than being permanent.
+_SA_MIN_GAP = 1.5
+_LAST_SA_CALL = 0.0
+_SA_429_BACKOFF = 30.0
 
-def _get_soup(url: str):
+
+def _sa_wait():
+    global _LAST_SA_CALL
+    elapsed = time.time() - _LAST_SA_CALL
+    if elapsed < _SA_MIN_GAP:
+        time.sleep(_SA_MIN_GAP - elapsed)
+    _LAST_SA_CALL = time.time()
+
+
+def _get_soup(url: str, _retried: bool = False):
+    _sa_wait()
     try:
         r = requests.get(url, headers=_HEADERS, timeout=15, verify=False)
+        if r.status_code == 429 and not _retried:
+            print(f"  [fund] {url}: 429, backing off {_SA_429_BACKOFF}s and retrying once")
+            time.sleep(_SA_429_BACKOFF)
+            return _get_soup(url, _retried=True)
         r.raise_for_status()
         return BeautifulSoup(r.text, "lxml")
     except Exception as e:
@@ -263,16 +291,62 @@ def _shibui_post(payload: dict, session_id: str | None) -> tuple[dict | None, st
         return None, new_sid
 
 
+_SHIBUI_SNAPSHOT_SQL = """
+WITH latest_val AS (
+  SELECT symbol, market_cap,
+    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+  FROM shibui.valuation
+  WHERE date >= CURRENT_DATE - INTERVAL '7 days'
+),
+latest_dd AS (
+  SELECT symbol, trailing_pe, ev_ebit, earnings_yield, dividend_yield,
+    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+  FROM shibui.fundamentals_derived_daily
+  WHERE date >= CURRENT_DATE - INTERVAL '7 days'
+),
+latest_dq AS (
+  SELECT symbol, return_on_invested_capital, return_on_equity, revenue_growth_yoy, eps_growth_yoy,
+    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+  FROM shibui.fundamentals_derived_quarterly
+  WHERE date >= CURRENT_DATE - INTERVAL '6 months'
+)
+SELECT g.ticker, g.gics_sector,
+  v.market_cap, dd.dividend_yield,
+  dd.trailing_pe, dd.ev_ebit, dd.earnings_yield,
+  dq.return_on_invested_capital, dq.return_on_equity, dq.revenue_growth_yoy, dq.eps_growth_yoy,
+  ae.forward_pe
+FROM shibui.general_info g
+LEFT JOIN latest_val v ON g.symbol = v.symbol AND v.rn = 1
+LEFT JOIN latest_dd dd ON g.symbol = dd.symbol AND dd.rn = 1
+LEFT JOIN latest_dq dq ON g.symbol = dq.symbol AND dq.rn = 1
+LEFT JOIN shibui.analyst_estimates ae ON g.symbol = ae.symbol
+WHERE g.ticker = :ticker
+LIMIT 1
+"""
+
+
 def fetch_shibui_us(ticker: str) -> dict:
     """
-    Backup source: fetch US fundamentals from Shibui Finance via MCP (free, no API key).
-    Uses MCP streamable-HTTP transport. Returns {} on any failure so callers fall through.
-    Note: Shibui is NL/SQL query-based — the response text is parsed with regex heuristics
-    and may need tuning if Shibui changes its output format.
+    Backup source: fetch US fundamentals from Shibui Finance via MCP (free, no
+    API key beyond the MCP auth header, if any). Returns {} on any failure so
+    callers fall through.
+
+    Rewritten 2026-09-10: Shibui's `stock_data_query` tool is DuckDB SQL
+    against a documented schema now (`get_database_schema` +
+    `get_query_patterns`), not the free-text NL query the old version of this
+    function assumed — that older approach had been silently broken (wrong
+    argument name, `query` instead of `user_prompt`+`query`) the whole time,
+    masked by this environment's separate Norton TLS-interception issue on
+    mcp.shibui.finance, so it never actually got exercised successfully
+    before now. The new query returns clean `structuredContent.result` JSON —
+    no regex parsing of free text needed, unlike the old approach.
+
+    Coverage: NYSE + NASDAQ only (no OTC, no non-US). ROIC/ROE come from
+    fundamentals_derived_quarterly (~90% populated); forward_pe from
+    analyst_estimates (a snapshot table, no history).
     """
     sid = None
     try:
-        # 1. Initialize MCP session
         init, sid = _shibui_post({
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {
@@ -284,7 +358,6 @@ def fetch_shibui_us(ticker: str) -> dict:
         if not init or "error" in init:
             return {}
 
-        # 2. Confirm initialized (fire-and-forget notification)
         h = dict(_SHIBUI_HEADERS)
         if sid:
             h["Mcp-Session-Id"] = sid
@@ -294,58 +367,44 @@ def fetch_shibui_us(ticker: str) -> dict:
         except Exception:
             pass
 
-        # 3. Query fundamentals via natural language (avoids needing exact schema)
-        query = (
-            f"For stock ticker {ticker.upper()}: return P/E ratio, EPS growth percent (TTM or YoY), "
-            f"revenue growth percent (TTM or YoY), dividend yield percent, market cap, and sector. "
-            f"Most recent available data, one row."
-        )
+        sql = _SHIBUI_SNAPSHOT_SQL.replace(":ticker", f"'{ticker.upper()}'")
         resp, sid = _shibui_post({
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "stock_data_query", "arguments": {"query": query}},
+            "params": {
+                "name": "stock_data_query",
+                "arguments": {
+                    "user_prompt": f"{ticker.upper()} fundamentals for Magic Formula screening",
+                    "query": sql,
+                },
+            },
         }, sid)
         if not resp or "error" in resp:
             return {}
 
-        # 4. Extract text content from MCP response
-        content = resp.get("result", {}).get("content", [])
-        text = " ".join(
-            block.get("text", "") for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-        if not text:
+        rows = resp.get("result", {}).get("structuredContent", {}).get("result", [])
+        if not rows:
             return {}
+        row = rows[0]
 
-        # 5. Parse values from the formatted text response
-        def _first(patterns):
-            for p in patterns:
-                m = re.search(p, text, re.I)
-                if m:
-                    return m.group(1)
-            return None
+        def _pct(v):
+            return round(v * 100, 2) if v is not None else None
 
-        result = {}
+        result = {
+            "pe": round(row["trailing_pe"], 2) if row.get("trailing_pe") is not None else None,
+            "fwd_pe": round(row["forward_pe"], 2) if row.get("forward_pe") is not None else None,
+            "eps_growth": _pct(row.get("eps_growth_yoy")),
+            "rev_growth": _pct(row.get("revenue_growth_yoy")),
+            "div_yield": _pct(row.get("dividend_yield")),
+            "mkt_cap": row.get("market_cap"),
+            "sector": row.get("gics_sector"),
+            "roic": _pct(row.get("return_on_invested_capital")),
+            "roe": _pct(row.get("return_on_equity")),
+            "ev_ebit": round(row["ev_ebit"], 2) if row.get("ev_ebit") is not None else None,
+            "earnings_yield": _pct(row.get("earnings_yield")),
+        }
 
-        pe_raw = _first([r"P/?E(?:\s+Ratio)?[:\s|]+([0-9.]+)", r"([0-9.]+)\s+P/?E"])
-        result["pe"] = float(pe_raw) if pe_raw else None
-
-        eps_raw = _first([r"EPS\s+Growth[:\s|]+([+-]?[0-9.]+)", r"Earnings\s+Growth[:\s|]+([+-]?[0-9.]+)"])
-        result["eps_growth"] = float(eps_raw) if eps_raw else None
-
-        rev_raw = _first([r"Revenue\s+Growth[:\s|]+([+-]?[0-9.]+)"])
-        result["rev_growth"] = float(rev_raw) if rev_raw else None
-
-        div_raw = _first([r"Dividend\s+Yield[:\s|]+([0-9.]+)", r"Div(?:idend)?\s+Yield[:\s|]+([0-9.]+)"])
-        result["div_yield"] = float(div_raw) if div_raw else None
-
-        mkt_raw = _first([r"Market\s+Cap[:\s|]+(\$?[\d.,]+\s*[BKMT]?)"])
-        result["mkt_cap"] = mkt_raw.strip() if mkt_raw else None
-
-        sec_raw = _first([r"Sector[:\s|]+([A-Za-z &/]+?)(?:\s{2,}|\||$)"])
-        result["sector"] = sec_raw.strip() if sec_raw else None
-
-        if result.get("pe") is not None:
-            pe_v = result["pe"]
+        pe_v = result.get("pe")
+        if pe_v is not None:
             if pe_v <= 0:
                 result["valuation"] = "Loss-making"
             elif pe_v < 12:
@@ -359,7 +418,7 @@ def fetch_shibui_us(ticker: str) -> dict:
         else:
             result["valuation"] = None
 
-        print(f"  [fund/shibui] {ticker}: pe={result.get('pe')} rev_growth={result.get('rev_growth')}")
+        print(f"  [fund/shibui] {ticker}: pe={result.get('pe')} roic={result.get('roic')} sector={result.get('sector')}")
         return result
 
     except Exception as e:
@@ -368,12 +427,45 @@ def fetch_shibui_us(ticker: str) -> dict:
 
 
 def fetch_us(ticker: str) -> dict:
-    """Fetch fundamentals for a US-listed ticker. Falls back to Shibui Finance if stockanalysis returns empty."""
+    """Fetch fundamentals for a US-listed ticker.
+
+    Tries FMP's free tier first (its key-metrics-ttm endpoint returns EY/ROIC
+    already computed, so no manual EBIT/EV math needed) — but FMP's free tier
+    restricts key-metrics-ttm/ratios-ttm to an inconsistent per-symbol
+    allowlist (confirmed 2026-09-10: AAPL/MSFT/PLTR/ETSY all work, but so-so
+    ORCL/CRM/CAT/BBW get a 402 despite being large, liquid names — the
+    restriction doesn't track market cap or sector). So FMP is opportunistic,
+    not authoritative: its fields are used where present, and stockanalysis.com
+    (then Shibui) fills whatever FMP didn't return.
+    """
+    fmp_result = {}
+    try:
+        fmp_result = _fmp.fetch_us(ticker)
+    except Exception as e:
+        print(f"  [fund/fmp] {ticker} error: {e}")
+
     base = f"{_SA_BASE}/stocks/{ticker.lower()}"
-    result = _scrape_page(f"{base}/", f"{base}/financials/ratios/")
+    sa_result = _scrape_page(f"{base}/", f"{base}/financials/ratios/")
+
+    result = dict(sa_result)
+    source_parts = ["stockanalysis"] if any(v is not None for v in sa_result.values()) else []
+    for k, v in fmp_result.items():
+        if v is not None:
+            result[k] = v
+    # Only credit FMP in `source` if it actually supplied a Magic-Formula-
+    # relevant field — mkt_cap/sector alone (the only fields FMP's free tier
+    # returns for a 402'd symbol) shouldn't be labeled as "fmp" data.
+    _mf_fields = ("pe", "roic", "roe", "ev_ebit", "earnings_yield")
+    if any(fmp_result.get(f) is not None for f in _mf_fields):
+        source_parts.insert(0, "fmp")
+
     if not any(v is not None for v in result.values()):
-        print(f"  [fund] {ticker}: stockanalysis empty, trying Shibui Finance backup")
+        print(f"  [fund] {ticker}: FMP + stockanalysis both empty, trying Shibui Finance backup")
         result = fetch_shibui_us(ticker)
+        if any(v is not None for v in result.values()):
+            source_parts = ["shibui"]
+
+    result["source"] = "+".join(source_parts) if source_parts else None
     return result
 
 

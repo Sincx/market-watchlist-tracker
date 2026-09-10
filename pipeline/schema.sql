@@ -1,0 +1,198 @@
+-- Fred Finance System — Turso schema (v2.2 + cash ledger addition)
+-- Source of truth: claude/fred-finance-system-spec.md §4, extended per the
+-- 2026-09-10 review decision to track portfolio cash/margin in Turso rather
+-- than leaving it dashboard-display-only.
+
+-- ── Universe & market data ──────────────────────────────────────────────────
+
+CREATE TABLE universe (
+    ticker TEXT NOT NULL, exchange TEXT NOT NULL,
+    index_membership TEXT NOT NULL,   -- 'SP500' | 'FTSE350' | 'STOXX600' | 'MORNINGSTAR' | 'INVESTOR_FLAGGED' | comma-list
+    yahoo_ticker TEXT, currency TEXT, sector TEXT,
+    added_date TEXT, active INTEGER DEFAULT 1,
+    sa_prefix TEXT,   -- stockanalysis.com's exchange-prefix segment (quote/<prefix>/<ticker>), non-US only. Added 2026-09-10 — Phase 4 prep.
+    PRIMARY KEY (ticker, exchange)
+);
+
+CREATE TABLE prices (
+    ticker TEXT, exchange TEXT, date TEXT,
+    open REAL, high REAL, low REAL, close REAL, volume REAL,
+    currency TEXT, usd_rate REAL,
+    ma20 REAL, ma50 REAL, ma200 REAL, rsi14 REAL, macd_signal TEXT,
+    vol_ratio REAL, technical_rating TEXT, fetched_at TEXT,
+    PRIMARY KEY (ticker, exchange, date)
+);
+
+CREATE TABLE fundamentals (
+    ticker TEXT, exchange TEXT, as_of_date TEXT,
+    pe REAL, fwd_pe REAL, eps_growth REAL, rev_growth REAL, div_yield REAL,
+    mkt_cap REAL, sector TEXT, earnings_yield REAL, roic REAL, roe REAL, ev_ebit REAL,
+    source TEXT, fetched_at TEXT,
+    PRIMARY KEY (ticker, exchange, as_of_date)
+);
+
+CREATE TABLE screen_results (
+    run_date TEXT, ticker TEXT, exchange TEXT,
+    earnings_yield REAL, roic REAL, ey_rank INTEGER, roic_rank INTEGER,
+    mf_rank INTEGER, passes_thresholds INTEGER,
+    PRIMARY KEY (run_date, ticker, exchange)
+);
+
+-- ── Signals — generalizes per-group "Buy Opportunities" flagging ───────────
+
+CREATE TABLE signals (
+    signal_id TEXT PRIMARY KEY, ticker TEXT, exchange TEXT,
+    source TEXT,          -- 'morningstar-undervalued' | 'morningstar-dividend' | 'magic-formula-pass'
+                           -- | 'investor:<investor_id>' | 'manual'
+    detail TEXT,           -- JSON: fair_value, discount_pct, stars, moat, direction, etc.
+    flagged_date TEXT, source_ref TEXT   -- link to the wiki page this came from
+);
+
+-- ── Strategies, generalized across instrument types ─────────────────────────
+
+CREATE TABLE strategies (
+    strategy_id TEXT PRIMARY KEY, name TEXT,
+    instrument_type TEXT,   -- 'equity_long' | 'equity_short' | 'option'
+    description TEXT, rules_ref TEXT,   -- section link into model-portfolio-management.md
+    active INTEGER DEFAULT 1
+);
+
+-- ── Portfolios (real, paper, or shadow-tracking another investor) ──────────
+
+CREATE TABLE portfolios (
+    portfolio_id TEXT PRIMARY KEY, name TEXT,
+    kind TEXT,              -- 'real' | 'paper' | 'shadow'
+    mirrors_investor_id TEXT,   -- NULL unless kind='shadow'
+    base_currency TEXT, created_date TEXT, active INTEGER DEFAULT 1
+);
+
+-- ── Trades — shorts, options, strategy/portfolio linkage, signal attribution ─
+
+CREATE TABLE trades (
+    trade_id TEXT PRIMARY KEY,
+    portfolio_id TEXT,       -- FK → portfolios
+    strategy_id TEXT,        -- FK → strategies
+    ticker TEXT, exchange TEXT,
+    instrument_type TEXT,    -- 'equity' | 'option'
+    -- 'long' | 'short' — the directional bet, evaluated against entry_price/
+    -- exit_price (the UNDERLYING's price for options, not the premium): a
+    -- bought call or a bought/sold-to-open position that profits when price
+    -- rises is 'long'; a bought put, or anything profiting when price falls,
+    -- is 'short' — regardless of whether the option itself was bought or
+    -- sold to open. (Corrected 2026-09-10 — an earlier comment here said
+    -- "short = sold/written to open", which is wrong: a long put is bought
+    -- to open but is a 'short' bet in this sense.)
+    direction TEXT,
+    entry_date TEXT, entry_price REAL, shares REAL,
+    currency TEXT,            -- native trade currency of entry_price/exit_price (e.g. 'GBX','EUR','USD') — added 2026-09-10 for multi-currency-native portfolios (Trading Portfolio); NULL/assume USD for portfolios sized in USD-equivalent (paper-trading)
+    -- Options-specific (NULL for equity trades). Manual entry only — no live
+    -- options data feed. P&L uses the underlying's own tracked price.
+    option_type TEXT,        -- 'call' | 'put' | NULL
+    strike REAL, expiry_date TEXT, premium REAL, contracts INTEGER,
+    stop_loss REAL, target1 REAL, target2 REAL,
+    exit_date TEXT, exit_price REAL, status TEXT,   -- 'open' | 'closed'
+    thesis TEXT,
+    source_signal_id TEXT    -- FK → signals: why this trade was made
+);
+
+-- ── Cash ledger — portfolio-level cash/margin accounting ───────────────────
+-- Append-only. Short-cash convention: opening a short writes NO ledger row
+-- (margin never touches cash); closing a short writes one 'short_close_pnl'
+-- row for the realized P&L only. Long buy/sell and option premium flows are
+-- ordinary cash movements. deposit/withdrawal/fee/dividend cover the rest.
+-- Running balance per portfolio = SUM(amount) via v_portfolio_cash_balance.
+
+CREATE TABLE cash_ledger (
+    entry_id TEXT PRIMARY KEY,
+    portfolio_id TEXT NOT NULL,   -- FK → portfolios
+    entry_date TEXT NOT NULL,
+    amount REAL NOT NULL,          -- positive = credit, negative = debit
+    entry_type TEXT NOT NULL,      -- 'deposit' | 'withdrawal' | 'buy' | 'sell' |
+                                    -- 'short_close_pnl' | 'option_premium' | 'dividend' | 'fee'
+    trade_id TEXT,                 -- FK → trades, nullable (deposits/withdrawals have none)
+    note TEXT
+);
+
+-- ── Tracked investors + their disclosed positions over time ────────────────
+
+CREATE TABLE tracked_investors (
+    investor_id TEXT PRIMARY KEY, name TEXT,
+    source_type TEXT,        -- '13F' | 'substack' | 'letter' | 'manual'
+    source_ref TEXT          -- wiki page(s) this is sourced from
+);
+
+CREATE TABLE investor_positions (
+    investor_id TEXT, ticker TEXT, exchange TEXT,
+    direction TEXT,           -- 'long' | 'short'
+    disclosed_date TEXT, entry_price_hint REAL,
+    status TEXT,              -- 'open' | 'trimmed' | 'closed'
+    source_ref TEXT,          -- wiki page / trading-post citation
+    PRIMARY KEY (investor_id, ticker, exchange, disclosed_date)
+);
+
+-- ── Task registry ────────────────────────────────────────────────────────────
+
+CREATE TABLE task_registry (
+    task_id TEXT PRIMARY KEY, kind TEXT,
+    schedule_cron TEXT, description TEXT, entry_point TEXT,
+    last_run_at TEXT, last_run_status TEXT
+);
+
+-- ── Views for the queryable layer ────────────────────────────────────────────
+
+-- sector here is f.sector (fundamentals, FMP/scrape-sourced) — the SAME
+-- field screen.py's _MF_EXCLUDE_SECTORS filter actually reads — not
+-- u.sector (universe, Wikipedia-sourced). The two can genuinely disagree
+-- per ticker (e.g. WISE: universe='Financial Services', fundamentals=
+-- 'Technology'); showing universe.sector here made correctly-included rows
+-- look like exclusion-filter leaks. Fixed 2026-09-10.
+CREATE VIEW v_magic_formula_latest AS
+SELECT sr.*, f.sector, u.index_membership, f.pe, f.div_yield
+FROM screen_results sr
+JOIN universe u ON u.ticker = sr.ticker AND u.exchange = sr.exchange
+JOIN fundamentals f ON f.ticker = sr.ticker AND f.exchange = sr.exchange
+WHERE sr.run_date = (SELECT MAX(run_date) FROM screen_results)
+  AND f.as_of_date = (SELECT MAX(as_of_date) FROM fundamentals f2
+                      WHERE f2.ticker = sr.ticker AND f2.exchange = sr.exchange);
+
+CREATE VIEW v_strategy_performance AS
+SELECT strategy_id, portfolio_id,
+       COUNT(*) AS trades_total,
+       SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS trades_closed,
+       SUM(CASE WHEN status = 'closed' AND
+                ((direction = 'long' AND exit_price > entry_price) OR
+                 (direction = 'short' AND exit_price < entry_price))
+           THEN 1 ELSE 0 END) AS wins,
+       AVG(CASE WHEN status = 'closed' THEN
+                (CASE WHEN direction = 'short' THEN -1 ELSE 1 END)
+                * (exit_price - entry_price) / entry_price
+           END) AS avg_return_pct,
+       AVG(CASE WHEN status = 'closed' THEN julianday(exit_date) - julianday(entry_date) END) AS avg_holding_days
+FROM trades
+GROUP BY strategy_id, portfolio_id;
+
+-- Fixed 2026-09-10 (Phase 8): the original version did shares*entry_price
+-- with no currency awareness. Fine for single-currency portfolios (paper-
+-- trading, the Burry shadow — both USD-only), but Trading Portfolio is
+-- genuinely multi-currency (GBX/EUR/USD native prices, see the `currency`
+-- column added this same day) — GBX (pence) entry_price is ~100x its GBP
+-- value, so open_cost_basis came out at $194,404 for 18 positions sized
+-- ~$1,000-1,500 each. This fix corrects the GBX order-of-magnitude only
+-- (÷100 to GBP); it does NOT convert GBP/EUR/USD to one common currency —
+-- those still get summed as if they were equal, which is still wrong, just
+-- far less wrong than the 100x GBX error. A real fix needs a live FX join
+-- per position, not attempted here — flagged as a follow-up.
+CREATE VIEW v_portfolio_performance AS
+SELECT portfolio_id,
+       SUM(CASE WHEN status='open' THEN
+             (CASE WHEN direction='short' THEN -1 ELSE 1 END) * shares * entry_price
+             * (CASE WHEN currency = 'GBX' THEN 0.01 ELSE 1.0 END)
+           ELSE 0 END) AS open_cost_basis,
+       COUNT(CASE WHEN status='open' THEN 1 END) AS open_positions,
+       COUNT(CASE WHEN status='closed' THEN 1 END) AS closed_positions
+FROM trades GROUP BY portfolio_id;
+
+CREATE VIEW v_portfolio_cash_balance AS
+SELECT portfolio_id, SUM(amount) AS cash_balance
+FROM cash_ledger
+GROUP BY portfolio_id;

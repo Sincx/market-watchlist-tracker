@@ -35,15 +35,19 @@ BURRY_POSITIONS = {
     "JD":   "Long",   # JD.com — one of two largest positions (with ADBE); first disclosed Aug 6, no entry price given
     "LULU": "Long",   # lululemon — full position added Jul 30 (~$118); added again Aug 7 at $127.45; already tracked in Morningstar-US group, flag only
     "FMCC": "Long",   # Freddie Mac — new position added Aug 7 at $5.43; GSE reform/IPO-delay thesis
-    "BBW":  "Long",   # Build-A-Bear Workshop — pre-existing position, first disclosed Aug 27; 20% down rule triggered, awaiting 10-Q
+    "BBW":  "Long",   # Build-A-Bear Workshop — pre-existing position, first disclosed Aug 27; BBW Part 1 (Aug 29) covers thesis history; 10-Q still pending as of Aug 29
+    "BIRK": "Long",   # Birkenstock — full 5.2% position by mid-Aug ($35s); added to again Aug 26 (mid-$30s); "favorite shoe since high school"
+    "SFM":  "Long",   # Sprouts Farmers Market — full 5.2% position added ~Aug 20 (high $70s); PE-takeout candidate thesis
     # Shorts / puts
-    "NVDA": "Short",  # Nvidia — AI circular-financing thesis; added Jul 24
-    "MU":   "Short",  # Micron — memory oversupply; added Jul 24
-    "CAT":  "Short",  # Caterpillar — US capex cycle peak; added Jul 24
-    "TSLA": "Short",  # Tesla — standing short
-    "PLTR": "Short",  # Palantir — rent-seeking gov contractor; DIA/MARS episode
-    "ORCL": "Short",  # Oracle — puts (half retained, sold half Jul 17) + new outright short added Aug 6 at $144.63
-    "NBIS": "Short",  # Nebius — added Aug 6 at $211.77; off-balance-sheet-liability thesis, puts passed on (IV >100%)
+    "NVDA": "Short",  # Nvidia — AI circular-financing thesis; added Jul 24; tactical Aug 26 call-hedge buy (single digits, mid-high $200s strike) ahead of earnings, thesis unchanged
+    "MU":   "Short",  # Micron — memory oversupply; added Jul 24; increased again Aug 12 (~$924) and Aug 13 (~$1000)
+    "CAT":  "Short",  # Caterpillar — US capex cycle peak; added Jul 24; trimmed 25% Aug 13 after gains; short again per Aug 26 Trading Post
+    "TSLA": "Short",  # Tesla — standing short; covered Aug 13 after a decent gain
+    "PLTR": "Short",  # Palantir — rent-seeking gov contractor; DIA/MARS episode; added to Aug 18-20 and Aug 26; Jan 2027 puts (low-mid $100s) re-entered Aug 10, Dec 2026 puts spared in Aug 13 de-gross
+    "ORCL": "Short",  # Oracle — outright short added Aug 6 at $144.63, added to Aug 12 (~$152); Jan 2027 puts fully closed Aug 4 (profitable, may re-enter)
+    "NBIS": "Short",  # Nebius — added Aug 6 at $211.77; added to Aug 12 (~$247); off-balance-sheet-liability + depreciation-schedule-extension thesis
+    "CRWV": "Short",  # CoreWeave — new short added ~Aug 18-20; paired with MU as "public a long time" vs. "not public very long" contrast
+    # Closed: AMAT (short disclosed Aug 4, covered Aug 13 after a decent gain)
     # ETF shorts (not tracked as individual rows): SOXX, QQQ
 }
 
@@ -143,6 +147,9 @@ TICKER_DISPLAY_INDEX = {
     "JD":     "NASDAQ 100",  # JD.com — long first disclosed Aug 6 Trading Post
     "FMCC":   "OTC",         # Freddie Mac — OTC Pink, no major index; long added Aug 7 Trading Post
     "BBW":    "NYSE",        # Build-A-Bear Workshop — NYSE, not in a major index; long first disclosed Aug 27 Trading Post
+    "BIRK":   "NYSE",        # Birkenstock Holding — NYSE, not in a major index; long, full 5.2% position by mid-Aug
+    "SFM":    "NASDAQ 100",  # Sprouts Farmers Market — NASDAQ 100 constituent; long, full 5.2% position ~Aug 20
+    "CRWV":   "NASDAQ",      # CoreWeave — NASDAQ, not in NASDAQ 100 (recent IPO); short added ~Aug 18-20
 }
 
 # Default display index for Morningstar-US and Burry tickers not in TICKER_DISPLAY_INDEX
@@ -269,10 +276,13 @@ GROUPS = {
         ],
     },
     # Stocks mentioned by Michael Burry in his 2026 Substack trading posts and SW50 series.
-    # Active positions: FLUT/DKNG/MOH/HCA/BABA/PYPL/VEEV/FISV/MELI/JD/FMCC/BBW (longs); MU/PLTR/NBIS (shorts/puts).
+    # Active positions: FLUT/DKNG/MOH/HCA/BABA/PYPL/VEEV/FISV/MELI/JD/FMCC/BBW/BIRK/SFM (longs);
+    #   MU/PLTR/NBIS/ORCL/CRWV (shorts/puts).
     # SW50 analyses: software & payments valuation series (Parts 1–2).
     # Excludes: NVDA/CAT/TSLA/ORCL/ADBE/INTU/CRM/ZTS/LULU (already tracked in other groups).
-    # Not tracked (no pipeline support): 0700.HK (Tencent), 3690.HK (Meituan), TPW.AX, Samsung Electronics (005930.KS).
+    # Not tracked (no pipeline support): 0700.HK (Tencent), 3690.HK (Meituan), TPW.AX/TPLWF (Temple & Webster),
+    #   Samsung Electronics (005930.KS).
+    # Closed: AMAT (short disclosed Aug 4, covered Aug 13).
     # ETF shorts (not tracked as individual rows): SOXX, QQQ.
     "Burry": {
         "start_row": 167,   # shifted down to make room for 8 new Morningstar-US stocks (Aug 2026 screens)
@@ -294,6 +304,8 @@ GROUPS = {
             "FMCC",
             # Aug 27, 2026 Trading Post — new long (BBW), first disclosed as a pre-existing position
             "BBW",
+            # Aug 18-20, 2026 Trading Post & Short Thoughts — new longs (BIRK, SFM); new short (CRWV)
+            "BIRK", "SFM", "CRWV",
         ],
     },
 }

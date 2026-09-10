@@ -33,13 +33,17 @@ def main():
     parser.add_argument(
         "--scope",
         choices=["EU", "US"],
-        required=True,
         help="EU = FTSE100 + EU Morningstar; US = DJI + NASDAQ + S&P500 + US Morningstar",
+    )
+    parser.add_argument(
+        "--refresh-universe",
+        action="store_true",
+        help="Rebuild the Turso `universe` table from S&P500/FTSE350/STOXX600 + curated groups + Burry-flagged, then exit",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Fetch data and compute indicators but do NOT write to Google Sheets",
+        help="Fetch data and compute indicators but do NOT write to Google Sheets (or, with --refresh-universe, to Turso)",
     )
     parser.add_argument(
         "--force-funds",
@@ -47,6 +51,14 @@ def main():
         help="Force a fundamentals refresh regardless of day (default: Mondays only)",
     )
     args = parser.parse_args()
+
+    if args.refresh_universe:
+        import universe as _uni
+        _uni.run(dry_run=args.dry_run)
+        return
+
+    if not args.scope:
+        parser.error("--scope is required unless --refresh-universe is given")
 
     if args.force_funds:
         import pipeline as _pl
