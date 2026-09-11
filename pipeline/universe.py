@@ -121,7 +121,7 @@ def fetch_sp500_equibles() -> list[dict] | None:
             rows_by_ticker[ticker] = {
                 "ticker": ticker, "exchange": "US", "index_membership": "SP500",
                 "yahoo_ticker": ticker, "currency": "USD",
-                "sector": "", "added_date": TODAY, "active": 1,
+                "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
             }
     return list(rows_by_ticker.values()) if rows_by_ticker else None
 
@@ -136,6 +136,7 @@ def fetch_sp500_wikipedia() -> list[dict]:
             "ticker": ticker, "exchange": "US", "index_membership": "SP500",
             "yahoo_ticker": ticker, "currency": "USD",
             "sector": str(r.get("GICS Sector", "")), "added_date": TODAY, "active": 1,
+            "asset_class": "equity",
         })
     return rows
 
@@ -174,7 +175,7 @@ def fetch_ftse350() -> list[dict]:
                 "yahoo_ticker": f"{ticker}.L", "currency": "GBX",
                 "sa_prefix": "lon",
                 "sector": str(r[sector_col]) if sector_col else "",
-                "added_date": TODAY, "active": 1,
+                "added_date": TODAY, "active": 1, "asset_class": "equity",
             })
     return rows
 
@@ -207,7 +208,7 @@ def fetch_stoxx600() -> list[dict]:
             "currency": None,
             "sa_prefix": COUNTRY_TO_SA_PREFIX.get(country),
             "sector": str(r[sector_col]) if sector_col else "",
-            "added_date": TODAY, "active": 1,
+            "added_date": TODAY, "active": 1, "asset_class": "equity",
         })
     return rows
 
@@ -245,7 +246,7 @@ def fetch_curated() -> list[dict]:
                 "yahoo_ticker": yahoo_ticker,
                 "currency": currency_map.get(raw_ticker, currency),
                 "sa_prefix": sa_prefix_map.get(raw_ticker) or ("lon" if exchange == "UK" else None),
-                "sector": "", "added_date": TODAY, "active": 1,
+                "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
             })
     return rows
 
@@ -257,9 +258,91 @@ def fetch_burry_flagged() -> list[dict]:
         rows.append({
             "ticker": ticker, "exchange": "US", "index_membership": "INVESTOR_FLAGGED",
             "yahoo_ticker": ticker, "currency": "USD",
-            "sector": "", "added_date": TODAY, "active": 1,
+            "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
         })
     return rows
+
+
+# Phase 2 (P2.1): crypto reuses universe/prices as-is (asset_class discriminator,
+# exchange='CRYPTO') rather than forking parallel tables. Scoped to watchlist-
+# only per Mike's 2026-09-11 decision — no synthetic portfolio, since
+# wiki/crypto/crypto-portfolio.md has price data but genuinely no share
+# quantities or cost basis for any of these 6 assets (worse than the Phase 7b
+# pension-portfolio gap, which at least had entry prices).
+#
+# Three data tiers (per spec P2.1.3), reflected in yahoo_ticker here:
+#   - BTC/ETH/LINK: yfinance covers these directly (BTC-USD etc.) — yahoo_ticker
+#     set, so technicals.py's existing batched fetch picks them up with zero
+#     code changes (its SELECT is `WHERE active=1 AND yahoo_ticker IS NOT NULL`,
+#     no equity-specific branching in the fetch/compute path — confirmed by
+#     reading it before building this).
+#   - EV/LUCKY: not on yfinance — yahoo_ticker left NULL so technicals.py skips
+#     them; crypto_prices.py (new) fetches these from CoinGecko's free
+#     /simple/price instead.
+#   - TEST: no working API for this token at all (the existing wiki page
+#     already documents CoinMarketCap failing to render its price) — no
+#     yahoo_ticker, no CoinGecko id; price stays manual-entry, same treatment
+#     as options (schema §9).
+CRYPTO_ASSETS = [
+    # ticker, yahoo_ticker (None if not on yfinance), index_membership
+    ("BTC",   "BTC-USD",  "CRYPTO_CORE"),
+    ("ETH",   "ETH-USD",  "CRYPTO_CORE"),
+    ("LINK",  "LINK-USD", "CRYPTO_CORE"),
+    ("EV",    None,       "CRYPTO_DEFI"),
+    ("LUCKY", None,       "CRYPTO_DEFI"),
+    ("TEST",  None,       "CRYPTO_DEFI"),
+]
+
+
+def fetch_crypto() -> list[dict]:
+    rows = []
+    for ticker, yahoo_ticker, index_membership in CRYPTO_ASSETS:
+        rows.append({
+            "ticker": ticker, "exchange": "CRYPTO", "index_membership": index_membership,
+            "yahoo_ticker": yahoo_ticker, "currency": "USD",
+            "sector": None, "added_date": TODAY, "active": 1, "asset_class": "crypto",
+        })
+    return rows
+
+
+# Metadata that has no equity equivalent — migrated by hand from
+# wiki/crypto/crypto-portfolio.md and company-everything-inc.md /
+# company-smardex.md (contract addresses cross-checked live against
+# CoinGecko's /coins/{id} endpoint 2026-09-11, both matched exactly).
+CRYPTO_META = [
+    {"ticker": "BTC", "chain": "Bitcoin", "contract_address": None, "category": "core",
+     "protocol_notes": None},
+    {"ticker": "ETH", "chain": "Ethereum", "contract_address": None, "category": "core",
+     "protocol_notes": None},
+    {"ticker": "LINK", "chain": "Ethereum", "contract_address": None, "category": "core",
+     "protocol_notes": None},
+    {"ticker": "EV", "chain": "Ethereum/Arbitrum/BSC",
+     "contract_address": "0xe7e7e741c23a4767831a56a8c99f522c5ac1e7e7", "category": "defi",
+     "protocol_notes": "Everything.inc — unified pool: trade + borrow + lend + up to 100x leverage. "
+                        "See wiki/crypto/company-everything-inc.md."},
+    {"ticker": "LUCKY", "chain": "BNB Smart Chain",
+     "contract_address": "0x67b47971426bb2180453b3993ff2ec319e704444", "category": "defi",
+     "protocol_notes": "B-Lucky — staking earns 35% of protocol revenue. CertiK score 3.5/10 per "
+                        "the wiki page's last manual check; treat as high-risk/thin-liquidity."},
+    {"ticker": "TEST", "chain": "BNB Smart Chain", "contract_address": None, "category": "meme",
+     "protocol_notes": "Test Token, deployed via Binance four.meme. No working price API found "
+                        "(CoinMarketCap's test-token page already documented as failing in the wiki "
+                        "page prior to this migration) — price stays manual-entry, same as options."},
+]
+
+
+def seed_crypto_meta(dry_run: bool = False) -> None:
+    rows = [{**r, "updated_at": TODAY} for r in CRYPTO_META]
+    if dry_run:
+        for r in rows:
+            print(" ", r)
+        return
+    client = db.get_client()
+    try:
+        n = db.upsert(client, "crypto_meta", rows)
+        print(f"Upserted {n} rows into crypto_meta.")
+    finally:
+        client.close()
 
 
 def merge(sources: Iterable[list[dict]]) -> list[dict]:
@@ -304,6 +387,7 @@ def run(dry_run: bool = False) -> None:
         ("STOXX 600", fetch_stoxx600),
         ("curated groups", fetch_curated),
         ("Burry-flagged", fetch_burry_flagged),
+        ("crypto", fetch_crypto),
     ]:
         try:
             rows = fetch_fn()
@@ -355,5 +439,10 @@ def run(dry_run: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--seed-crypto-meta", action="store_true",
+                         help="Seed/refresh crypto_meta only (one-off, not part of the regular universe refresh)")
     args = parser.parse_args()
-    run(dry_run=args.dry_run)
+    if args.seed_crypto_meta:
+        seed_crypto_meta(dry_run=args.dry_run)
+    else:
+        run(dry_run=args.dry_run)

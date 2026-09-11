@@ -7,12 +7,27 @@
 
 CREATE TABLE universe (
     ticker TEXT NOT NULL, exchange TEXT NOT NULL,
-    index_membership TEXT NOT NULL,   -- 'SP500' | 'FTSE350' | 'STOXX600' | 'MORNINGSTAR' | 'INVESTOR_FLAGGED' | comma-list
+    index_membership TEXT NOT NULL,   -- 'SP500' | 'FTSE350' | 'STOXX600' | 'MORNINGSTAR' | 'INVESTOR_FLAGGED' | 'CRYPTO_CORE' | 'CRYPTO_DEFI' | comma-list
     yahoo_ticker TEXT, currency TEXT, sector TEXT,
     added_date TEXT, active INTEGER DEFAULT 1,
     sa_prefix TEXT,   -- stockanalysis.com's exchange-prefix segment (quote/<prefix>/<ticker>), non-US only. Added 2026-09-10 — Phase 4 prep.
     notes TEXT,   -- manual, single current free-text note per ticker. Added 2026-09-11 (Phase 2 P2.3) via live ALTER TABLE.
+    asset_class TEXT NOT NULL DEFAULT 'equity',   -- 'equity' | 'crypto'. Added 2026-09-11 (Phase 2 P2.1) via live ALTER TABLE.
     PRIMARY KEY (ticker, exchange)
+);
+
+-- Crypto-only metadata with no equity equivalent (chain, contract, protocol
+-- facts previously hand-maintained in wiki/crypto/crypto-portfolio.md's
+-- prose tables). universe/prices are reused as-is for crypto (asset_class
+-- discriminator + exchange='CRYPTO') rather than forking parallel tables —
+-- OHLCV + technical_rating already generalize fine to a crypto daily bar.
+CREATE TABLE crypto_meta (
+    ticker TEXT PRIMARY KEY,
+    chain TEXT,                 -- 'Bitcoin' | 'Ethereum' | 'BNB Smart Chain' | 'Ethereum/Arbitrum/BSC' ...
+    contract_address TEXT,
+    category TEXT,              -- 'core' | 'defi' | 'meme' | ...
+    protocol_notes TEXT,        -- staking APR, TVL source, security-rating notes — free text
+    updated_at TEXT
 );
 
 CREATE TABLE prices (
