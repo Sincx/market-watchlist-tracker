@@ -11,6 +11,7 @@ CREATE TABLE universe (
     yahoo_ticker TEXT, currency TEXT, sector TEXT,
     added_date TEXT, active INTEGER DEFAULT 1,
     sa_prefix TEXT,   -- stockanalysis.com's exchange-prefix segment (quote/<prefix>/<ticker>), non-US only. Added 2026-09-10 — Phase 4 prep.
+    notes TEXT,   -- manual, single current free-text note per ticker. Added 2026-09-11 (Phase 2 P2.3) via live ALTER TABLE.
     PRIMARY KEY (ticker, exchange)
 );
 
@@ -43,7 +44,9 @@ CREATE TABLE screen_results (
 CREATE TABLE signals (
     signal_id TEXT PRIMARY KEY, ticker TEXT, exchange TEXT,
     source TEXT,          -- 'morningstar-undervalued' | 'morningstar-dividend' | 'magic-formula-pass'
-                           -- | 'investor:<investor_id>' | 'manual'
+                           -- | 'investor:<investor_id>' | 'manual' | 'llm-research' (Phase 2 P2.0b —
+                           -- a judgment task's own WebSearch/WebFetch finding, persisted before the
+                           -- narrative is written, so it becomes a queryable fact like every other source)
     detail TEXT,           -- JSON: fair_value, discount_pct, stars, moat, direction, etc.
     flagged_date TEXT, source_ref TEXT   -- link to the wiki page this came from
 );
@@ -196,3 +199,18 @@ CREATE VIEW v_portfolio_cash_balance AS
 SELECT portfolio_id, SUM(amount) AS cash_balance
 FROM cash_ledger
 GROUP BY portfolio_id;
+
+-- Phase 2 (P2.0c): most recent signal per ticker, used by both the universe
+-- and screener API routes so neither has to re-derive this with a correlated
+-- subquery. signal_id is a random UUID (not sortable), so the tiebreaker for
+-- two signals landing on the same flagged_date is SQLite's own `rowid`
+-- (monotonically increasing with insert order) rather than signal_id DESC.
+CREATE VIEW v_latest_signal AS
+SELECT s.ticker, s.exchange, s.source, s.detail, s.flagged_date, s.source_ref
+FROM signals s
+WHERE s.rowid = (
+    SELECT s2.rowid FROM signals s2
+    WHERE s2.ticker = s.ticker AND s2.exchange = s.exchange
+    ORDER BY s2.flagged_date DESC, s2.rowid DESC
+    LIMIT 1
+);

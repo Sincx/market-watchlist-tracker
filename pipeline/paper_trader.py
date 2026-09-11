@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
 from datetime import date
 
 import db
@@ -127,6 +128,35 @@ def capital_check() -> dict:
     }
 
 
+def record_signal(ticker: str, exchange: str, detail: dict, source: str = "llm-research",
+                   source_ref: str | None = None, dry_run: bool = False) -> dict:
+    """Phase 2 (P2.0b): persists the LLM's own WebSearch/WebFetch research on
+    a candidate as a `signals` row (same shape as screen.py's magic-formula-
+    pass rows) before the trade is written, so a citation/target-price/rating
+    found during Step 6's research becomes a queryable fact instead of a
+    dead end living only in one sentence of a markdown narrative.
+
+    Call this BEFORE record_trade() and pass the returned signal_id as
+    record_trade()'s source_signal_id — the FK column already exists and is
+    already threaded through by record_trade(), this was the only missing
+    piece.
+    """
+    row = {
+        "signal_id": str(uuid.uuid4()), "ticker": ticker, "exchange": exchange,
+        "source": source, "detail": json.dumps(detail), "flagged_date": TODAY,
+        "source_ref": source_ref,
+    }
+    if dry_run:
+        return {"would_write": row}
+
+    client = db.get_client()
+    try:
+        db.upsert(client, "signals", [row])
+    finally:
+        client.close()
+    return {"written": row}
+
+
 def record_trade(ticker: str, exchange: str, strategy_id: str, entry_price: float,
                   thesis: str, stop_loss: float | None = None, target1: float | None = None,
                   target2: float | None = None, source_signal_id: str | None = None,
@@ -183,6 +213,15 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("select-strategy")
     sub.add_parser("capital-check")
+
+    sig = sub.add_parser("record-signal")
+    sig.add_argument("--ticker", required=True)
+    sig.add_argument("--exchange", required=True)
+    sig.add_argument("--detail", required=True, help="JSON string, e.g. citation/target_price/rating")
+    sig.add_argument("--source", default="llm-research")
+    sig.add_argument("--source-ref", default=None)
+    sig.add_argument("--dry-run", action="store_true")
+
     rec = sub.add_parser("record-trade")
     rec.add_argument("--ticker", required=True)
     rec.add_argument("--exchange", required=True)
@@ -207,6 +246,10 @@ if __name__ == "__main__":
         print(json.dumps(select_strategy(), indent=2))
     elif args.cmd == "capital-check":
         print(json.dumps(capital_check(), indent=2))
+    elif args.cmd == "record-signal":
+        result = record_signal(args.ticker, args.exchange, json.loads(args.detail),
+                                args.source, args.source_ref, dry_run=args.dry_run)
+        print(json.dumps(result, indent=2))
     elif args.cmd == "record-trade":
         result = record_trade(args.ticker, args.exchange, args.strategy, args.entry_price,
                                args.thesis, args.stop_loss, args.target1, args.target2,
