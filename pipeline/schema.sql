@@ -110,7 +110,18 @@ CREATE TABLE trades (
     stop_loss REAL, target1 REAL, target2 REAL,
     exit_date TEXT, exit_price REAL, status TEXT,   -- 'open' | 'closed'
     thesis TEXT,
-    source_signal_id TEXT    -- FK → signals: why this trade was made
+    source_signal_id TEXT,   -- FK → signals: why this trade was made
+    -- Cumulative $ already realized from T1/T2 partial exits on a still-
+    -- OPEN position — schema has no per-tranche history (one entry + one
+    -- exit per row, documented Phase 7 limitation), so `shares` gets
+    -- manually reduced to the remaining size when a tranche sells and the
+    -- proceeds have nowhere else to live. Added 2026-09-12 after finding
+    -- fred-dashboard's Net P&L completely omitted this for 7 P1 positions
+    -- ($5,872 banked, invisible everywhere) — NULL/0 for positions with no
+    -- partial exits yet. daily-paper-trader's T1/T2 trigger steps
+    -- (instructions.md Steps B/C) must increment this alongside the
+    -- existing `shares` correction, or it drifts stale again.
+    realized_pnl_partial REAL
 );
 
 -- ── Cash ledger — portfolio-level cash/margin accounting ───────────────────
