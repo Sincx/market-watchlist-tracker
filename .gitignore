@@ -1,3 +1,5 @@
 pipeline/.env
 pipeline/__pycache__/
 *.pyc
+pipeline/.sec_company_tickers.json
+pipeline/.combined_ca_bundle.pem

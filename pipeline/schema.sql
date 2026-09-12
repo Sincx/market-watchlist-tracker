@@ -7,7 +7,7 @@
 
 CREATE TABLE universe (
     ticker TEXT NOT NULL, exchange TEXT NOT NULL,
-    index_membership TEXT NOT NULL,   -- 'SP500' | 'FTSE350' | 'STOXX600' | 'MORNINGSTAR' | 'INVESTOR_FLAGGED' | 'CRYPTO_CORE' | 'CRYPTO_DEFI' | comma-list
+    index_membership TEXT NOT NULL,   -- 'SP500' | 'FTSE350' | 'STOXX600' | 'MORNINGSTAR' | 'INVESTOR_FLAGGED' | 'CRYPTO_CORE' | 'CRYPTO_DEFI' | 'WIKI_MENTIONED' | comma-list
     yahoo_ticker TEXT, currency TEXT, sector TEXT,
     added_date TEXT, active INTEGER DEFAULT 1,
     sa_prefix TEXT,   -- stockanalysis.com's exchange-prefix segment (quote/<prefix>/<ticker>), non-US only. Added 2026-09-10 — Phase 4 prep.

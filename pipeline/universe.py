@@ -263,6 +263,35 @@ def fetch_burry_flagged() -> list[dict]:
     return rows
 
 
+def fetch_wiki_mentioned() -> list[dict]:
+    """Phase 2 (P2.2) — tickers auto-added by resolve_ticker.py from the
+    weekly wiki-company-scanner task. Unlike fetch_burry_flagged() (which
+    reads a static config.py dict), this derives its list from `signals`
+    directly — resolve_ticker.py already writes a `source='wiki-mention'`
+    row for every ticker it adds, so that table is the live source of
+    truth rather than a second static list to keep in sync. Registering
+    this in run()'s source list (not just doing a one-off upsert in
+    resolve_ticker.py) is what keeps these tickers active across future
+    monthly universe refreshes — run()'s staleness sweep deactivates any
+    active row absent from every registered source's current output.
+    US-only for now, matching resolve_ticker.py's SEC-only resolution scope.
+    """
+    client = db.get_client()
+    try:
+        rows = db.query(client, "SELECT DISTINCT ticker, exchange FROM signals WHERE source = 'wiki-mention';")
+    finally:
+        client.close()
+    result = []
+    for r in rows:
+        ticker = _normalize_ticker(r["ticker"])
+        result.append({
+            "ticker": ticker, "exchange": r["exchange"], "index_membership": "WIKI_MENTIONED",
+            "yahoo_ticker": ticker, "currency": "USD",
+            "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
+        })
+    return result
+
+
 # Phase 2 (P2.1): crypto reuses universe/prices as-is (asset_class discriminator,
 # exchange='CRYPTO') rather than forking parallel tables. Scoped to watchlist-
 # only per Mike's 2026-09-11 decision — no synthetic portfolio, since
@@ -388,6 +417,7 @@ def run(dry_run: bool = False) -> None:
         ("curated groups", fetch_curated),
         ("Burry-flagged", fetch_burry_flagged),
         ("crypto", fetch_crypto),
+        ("wiki-mentioned", fetch_wiki_mentioned),
     ]:
         try:
             rows = fetch_fn()

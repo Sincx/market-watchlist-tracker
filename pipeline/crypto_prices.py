@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import certifi
 import requests
@@ -30,12 +31,29 @@ import db
 
 TODAY = date.today().isoformat()
 
-# Same convention as fetchers.py: Norton intercepts TLS for new HTTPS
-# domains on this machine and requests' bundled certifi CA doesn't trust
-# its injected root cert (confirmed 2026-09-11 — plain curl worked via
-# Windows' own cert store, but `requests` failed with CERTIFICATE_VERIFY_
-# FAILED until REQUESTS_CA_BUNDLE was set to Norton's wscert.pem).
-_SSL_VERIFY = os.getenv("REQUESTS_CA_BUNDLE") or os.getenv("CURL_CA_BUNDLE") or certifi.where()
+
+def _build_ssl_verify() -> str:
+    """A CA bundle trusting both certifi's normal roots AND Norton's
+    injected root. Norton intercepts TLS for SOME domains on this machine
+    (replacing the real cert chain with one signed by its own root) but not
+    others (the real chain applies unmodified) — found 2026-09-12 building
+    resolve_ticker.py: CoinGecko needs Norton's cert alone (it IS
+    intercepted), but SEC.gov failed with Norton's cert alone (it ISN'T
+    intercepted — verify=<path> replaces the trusted set entirely rather
+    than adding to it). A merged bundle covers both without guessing which
+    case applies per domain.
+    """
+    norton_cert = os.getenv("REQUESTS_CA_BUNDLE") or os.getenv("CURL_CA_BUNDLE")
+    if not norton_cert or not Path(norton_cert).exists():
+        return certifi.where()
+    combined_path = Path(__file__).parent / ".combined_ca_bundle.pem"
+    certifi_path = Path(certifi.where())
+    if not combined_path.exists() or combined_path.stat().st_mtime < certifi_path.stat().st_mtime:
+        combined_path.write_bytes(certifi_path.read_bytes() + b"\n" + Path(norton_cert).read_bytes())
+    return str(combined_path)
+
+
+_SSL_VERIFY = _build_ssl_verify()
 
 # ticker -> CoinGecko coin id. Verified 2026-09-11 by cross-checking each
 # id's /coins/{id} contract_address against wiki/crypto's documented
