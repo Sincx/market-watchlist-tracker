@@ -11,9 +11,12 @@ with open=high=low=close (the spot price) and volume left NULL, matching
 the spec's own "tolerate and surface gaps rather than erroring" principle
 (Open Risks) rather than fabricating indicators from a single data point.
 
-$TEST has no working price API at all (confirmed: the wiki page already
-documented CoinMarketCap failing to render its price before this migration)
-— excluded here, stays manual-entry same as options (schema §9).
+$TEST was believed to have no working price API (the wiki page documented
+CoinMarketCap failing to render its price) until Mike supplied CoinGecko's
+actual current page for it 2026-09-12 — that claim is now corrected. Its
+CoinGecko id had migrated from an old "test-2" slug to "test-3" (verified
+live: contract address 0x86bb94ddd16efc8bc58e6b056e8df71d9e666429 on
+binance-smart-chain matches exactly), which is why it wasn't found before.
 
 Run standalone: python crypto_prices.py [--dry-run]
 """
@@ -55,14 +58,18 @@ def _build_ssl_verify() -> str:
 
 _SSL_VERIFY = _build_ssl_verify()
 
-# ticker -> CoinGecko coin id. Verified 2026-09-11 by cross-checking each
-# id's /coins/{id} contract_address against wiki/crypto's documented
-# addresses (both matched exactly) — CoinGecko's search-by-symbol is
+# ticker -> CoinGecko coin id. Verified by cross-checking each id's
+# /coins/{id} contract_address against wiki/crypto's documented addresses
+# (all matched exactly) — CoinGecko's search-by-symbol/id-guessing is
 # unreliable for obscure tokens (many unrelated coins share the same
-# ticker), so this mapping is deliberately hardcoded, not looked up live.
+# ticker or a near-identical id, e.g. "test-2" is a Solana meme coin
+# unrelated to our BNB-chain $TEST, whose real id turned out to be
+# "test-3" after a CoinGecko-side id migration), so this mapping is
+# deliberately hardcoded per-token, not looked up live.
 COINGECKO_IDS = {
     "EV": "everything",
     "LUCKY": "lucky",
+    "TEST": "test-3",
 }
 
 

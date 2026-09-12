@@ -305,13 +305,14 @@ def fetch_wiki_mentioned() -> list[dict]:
 #     code changes (its SELECT is `WHERE active=1 AND yahoo_ticker IS NOT NULL`,
 #     no equity-specific branching in the fetch/compute path — confirmed by
 #     reading it before building this).
-#   - EV/LUCKY: not on yfinance — yahoo_ticker left NULL so technicals.py skips
-#     them; crypto_prices.py (new) fetches these from CoinGecko's free
-#     /simple/price instead.
-#   - TEST: no working API for this token at all (the existing wiki page
-#     already documents CoinMarketCap failing to render its price) — no
-#     yahoo_ticker, no CoinGecko id; price stays manual-entry, same treatment
-#     as options (schema §9).
+#   - EV/LUCKY/TEST: not on yfinance — yahoo_ticker left NULL so
+#     technicals.py skips them; crypto_prices.py fetches all three from
+#     CoinGecko's free /simple/price instead. TEST was believed to have no
+#     working price API at all (the wiki page documented CoinMarketCap
+#     failing to render its price) until Mike supplied CoinGecko's actual
+#     current page for it 2026-09-12 — its id had migrated from an old
+#     "test-2" slug to "test-3", which is why an earlier symbol-based
+#     search hadn't found it.
 CRYPTO_ASSETS = [
     # ticker, yahoo_ticker (None if not on yfinance), index_membership
     ("BTC",   "BTC-USD",  "CRYPTO_CORE"),
@@ -353,10 +354,12 @@ CRYPTO_META = [
      "contract_address": "0x67b47971426bb2180453b3993ff2ec319e704444", "category": "defi",
      "protocol_notes": "B-Lucky — staking earns 35% of protocol revenue. CertiK score 3.5/10 per "
                         "the wiki page's last manual check; treat as high-risk/thin-liquidity."},
-    {"ticker": "TEST", "chain": "BNB Smart Chain", "contract_address": None, "category": "meme",
-     "protocol_notes": "Test Token, deployed via Binance four.meme. No working price API found "
-                        "(CoinMarketCap's test-token page already documented as failing in the wiki "
-                        "page prior to this migration) — price stays manual-entry, same as options."},
+    {"ticker": "TEST", "chain": "BNB Smart Chain",
+     "contract_address": "0x86bb94ddd16efc8bc58e6b056e8df71d9e666429", "category": "meme",
+     "protocol_notes": "Test Token, deployed via Binance four.meme. CoinMarketCap failed to render "
+                        "its price (per the wiki page, pre-migration), but CoinGecko does cover it — "
+                        "id 'test-3' (an older 'test-2' slug had migrated), found via Mike's link "
+                        "2026-09-12. Priced daily by crypto_prices.py same as EV/LUCKY."},
 ]
 
 
