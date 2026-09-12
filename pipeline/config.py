@@ -124,6 +124,10 @@ TICKER_DISPLAY_INDEX = {
     "TSM":    "NYSE",        # Taiwan Semiconductor ADR — not a US index member
     "TW":     "NASDAQ",      # Tradeweb Markets
     "BSY":    "NASDAQ",      # Bentley Systems — dual class, not NASDAQ 100
+    "ASML":   "NASDAQ 100",  # ASML — NASDAQ 100 constituent, not S&P 500
+    "SNPS":   "NASDAQ 100",  # Synopsys — NASDAQ 100 constituent, not S&P 500
+    "MGA":    "NYSE",        # Magna International — Canadian foreign private issuer, not a US index member
+    "WMG":    "NASDAQ",      # Warner Music Group — NASDAQ but not NASDAQ 100
     # Burry group — per-ticker
     "FLUT":   "NYSE",        # Flutter Entertainment dual-listed (NYSE + LSE)
     "DKNG":   "NASDAQ 100",  # DraftKings
@@ -273,6 +277,9 @@ GROUPS = {
             "ICE", "HSY", "AR",
             # Added from Aug 2026 Morningstar "Best Companies to Own" growth/value screens (rows 159-166)
             "FER", "TSM", "TW", "ROL", "BSY", "ECL", "TDG", "ALB",
+            # Added from Sep 2026 Morningstar screens: 4-star weekly (ASML/SNPS/CRH/MGA),
+            # dividend-raisers (RMD/WMG), dividend aristocrats (AMCR/BF.B/HRL/KMB) (rows 167-176)
+            "ASML", "SNPS", "CRH", "MGA", "RMD", "WMG", "AMCR", "BF.B", "HRL", "KMB",
         ],
     },
     # Stocks mentioned by Michael Burry in his 2026 Substack trading posts and SW50 series.
@@ -285,7 +292,7 @@ GROUPS = {
     # Closed: AMAT (short disclosed Aug 4, covered Aug 13).
     # ETF shorts (not tracked as individual rows): SOXX, QQQ.
     "Burry": {
-        "start_row": 167,   # shifted down to make room for 8 new Morningstar-US stocks (Aug 2026 screens)
+        "start_row": 177,   # shifted down to make room for 10 new Morningstar-US stocks (Sep 2026 screens)
         "exchange": "US",
         "currency": "USD",
         "pct_format": "NUMBER",
