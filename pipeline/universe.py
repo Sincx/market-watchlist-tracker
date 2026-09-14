@@ -335,6 +335,36 @@ def fetch_crypto() -> list[dict]:
     return rows
 
 
+# Found 2026-09-14: Trading Portfolio holds two positions that are the
+# EU/Xetra-LISTED shares of otherwise-US companies, trading there under a
+# real Yahoo symbol that doesn't match the trades table's own ticker string.
+# Neither is part of any index/curated group — they're portfolio-specific
+# holdings that just need a real yahoo_ticker to get priced at all. Both
+# were previously stuck at $0 value (no price row ever existed for them).
+# Deliberately keep `ticker` here identical to what trades.ticker already
+# uses (the wiki/trades table calls the Accenture position "ACN" throughout,
+# same as its US ticker, even though this specific holding is the Xetra
+# listing) — only `yahoo_ticker` needs to point at the real Xetra symbol, so
+# no trades-table edit is needed. Verified live via Yahoo's chart API before
+# adding (CSA.DE €164.90, ZOE.DE €64.14, both real EUR quotes).
+PORTFOLIO_SPECIFIC_TICKERS = [
+    # ticker (as trades.ticker already has it), exchange, real yahoo_ticker, currency
+    ("ACN", "EU", "CSA.DE", "EUR"),   # Accenture's Xetra listing trades as "CSA" on Yahoo
+    ("ZOE", "EU", "ZOE.DE", "EUR"),   # Zoetis's Xetra listing — "ZOE" + ".DE" is the real symbol
+]
+
+
+def fetch_portfolio_specific() -> list[dict]:
+    rows = []
+    for ticker, exchange, yahoo_ticker, currency in PORTFOLIO_SPECIFIC_TICKERS:
+        rows.append({
+            "ticker": ticker, "exchange": exchange, "index_membership": "PORTFOLIO_HOLDING",
+            "yahoo_ticker": yahoo_ticker, "currency": currency,
+            "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
+        })
+    return rows
+
+
 # Metadata that has no equity equivalent — migrated by hand from
 # wiki/crypto/crypto-portfolio.md and company-everything-inc.md /
 # company-smardex.md (contract addresses cross-checked live against
@@ -421,6 +451,7 @@ def run(dry_run: bool = False) -> None:
         ("Burry-flagged", fetch_burry_flagged),
         ("crypto", fetch_crypto),
         ("wiki-mentioned", fetch_wiki_mentioned),
+        ("portfolio-specific", fetch_portfolio_specific),
     ]:
         try:
             rows = fetch_fn()
