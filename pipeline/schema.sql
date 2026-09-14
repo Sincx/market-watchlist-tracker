@@ -106,9 +106,22 @@ CREATE TABLE trades (
     entry_date TEXT, entry_price REAL, shares REAL,
     currency TEXT,            -- native trade currency of entry_price/exit_price (e.g. 'GBX','EUR','USD') — added 2026-09-10 for multi-currency-native portfolios (Trading Portfolio); NULL/assume USD for portfolios sized in USD-equivalent (paper-trading)
     -- Options-specific (NULL for equity trades). Manual entry only — no live
-    -- options data feed. P&L uses the underlying's own tracked price.
+    -- options data feed for entry terms (strike/expiry/premium paid). Daily
+    -- mark-to-market IS now computed (see option_marks below, added
+    -- 2026-09-14) via Black-Scholes off the underlying's own tracked price —
+    -- this comment previously said P&L wasn't modeled at all, which is now
+    -- only true for the entry side, not the ongoing mark.
     option_type TEXT,        -- 'call' | 'put' | NULL
     strike REAL, expiry_date TEXT, premium REAL, contracts INTEGER,
+    -- 'paid' (bought to open — a long premium position, profits when the
+    -- option's value rises) | 'received' (sold/written to open — a short
+    -- premium position, profits when it falls). Distinct from `direction`
+    -- above, which is the bet on the UNDERLYING, not the premium cash flow —
+    -- a bought put is direction='short' (bearish bet) AND premium_flow='paid'
+    -- (long the put itself); a written covered call would be direction='long'
+    -- but premium_flow='received'. Defaults to 'paid' since every option
+    -- position recorded so far has been a bought put (Phase 7c backfill).
+    premium_flow TEXT DEFAULT 'paid',
     stop_loss REAL, target1 REAL, target2 REAL,
     exit_date TEXT, exit_price REAL, status TEXT,   -- 'open' | 'closed'
     thesis TEXT,
@@ -124,6 +137,29 @@ CREATE TABLE trades (
     -- (instructions.md Steps B/C) must increment this alongside the
     -- existing `shares` correction, or it drifts stale again.
     realized_pnl_partial REAL
+);
+
+-- Daily option mark-to-market, added 2026-09-14 (options_pricing.py). One row
+-- per (trade_id, date) — mirrors `prices`' date-keyed shape rather than
+-- overwriting a single "current" value, so a history of marks accumulates
+-- the same way equity prices do. Computed via Black-Scholes using the
+-- underlying's own tracked `prices.close` and a HISTORICAL volatility proxy
+-- (annualized stdev of the underlying's trailing daily log returns) — there
+-- is no live options-chain/IV data source in this pipeline, so this is a
+-- realized-vol approximation of IV, not a true market-implied one. Written
+-- by `refresh-technicals` right after prices update for the day, so the
+-- underlying close it joins against is always same-day.
+CREATE TABLE option_marks (
+    trade_id TEXT,               -- FK → trades
+    date TEXT,                   -- valuation date
+    underlying_price REAL, underlying_price_date TEXT,   -- the prices.close/date actually used
+    volatility REAL,             -- annualized, from trailing ~90 daily closes (see historical_volatility())
+    time_to_expiry_years REAL, risk_free_rate REAL,   -- risk_free_rate is a documented constant (RISK_FREE_RATE in options_pricing.py), not fetched live
+    premium_estimate REAL,       -- Black-Scholes fair value, per underlying share
+    mkt_value REAL,              -- premium_estimate * shares, position's native currency (no FX conversion here)
+    unrealized_pnl REAL,         -- (premium_estimate - trades.premium) * shares, signed by trades.premium_flow
+    method TEXT,                 -- provenance tag, e.g. 'black-scholes-hv90'
+    PRIMARY KEY (trade_id, date)
 );
 
 -- ── Cash ledger — portfolio-level cash/margin accounting ───────────────────

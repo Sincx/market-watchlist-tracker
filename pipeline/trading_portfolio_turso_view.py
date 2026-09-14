@@ -80,9 +80,11 @@ def get_portfolio_view() -> dict:
         rows = db.query(client, """
             SELECT t.trade_id, t.ticker, t.exchange, t.instrument_type, t.direction,
                    t.entry_date, t.entry_price, t.shares, t.currency, t.status,
-                   t.option_type, t.strike, t.expiry_date, t.premium, t.contracts,
+                   t.option_type, t.strike, t.expiry_date, t.premium, t.contracts, t.premium_flow,
                    p.close, p.rsi14, p.macd_signal, p.ma20, p.ma50, p.atr14, p.technical_rating,
-                   p.date AS price_date
+                   p.date AS price_date,
+                   m.premium_estimate, m.mkt_value AS option_mkt_value, m.unrealized_pnl AS option_unrealized_pnl,
+                   m.volatility, m.time_to_expiry_years, m.date AS mark_date
             FROM trades t
             LEFT JOIN (
                 SELECT ticker, exchange, close, rsi14, macd_signal, ma20, ma50, atr14,
@@ -90,6 +92,11 @@ def get_portfolio_view() -> dict:
                        ROW_NUMBER() OVER (PARTITION BY ticker, exchange ORDER BY date DESC) rn
                 FROM prices
             ) p ON p.ticker = t.ticker AND p.exchange = t.exchange AND p.rn = 1
+            LEFT JOIN (
+                SELECT trade_id, premium_estimate, mkt_value, unrealized_pnl, volatility, time_to_expiry_years, date,
+                       ROW_NUMBER() OVER (PARTITION BY trade_id ORDER BY date DESC) rn
+                FROM option_marks
+            ) m ON m.trade_id = t.trade_id AND m.rn = 1
             WHERE t.portfolio_id = :pid AND t.status = 'open';
         """, {"pid": PORTFOLIO_ID})
     finally:
@@ -142,10 +149,25 @@ def get_portfolio_view() -> dict:
     options = [{
         "trade_id": r["trade_id"], "ticker": r["ticker"], "exchange": r["exchange"],
         "option_type": r["option_type"], "strike": r["strike"], "expiry_date": r["expiry_date"],
-        "premium": r["premium"], "contracts": r["contracts"],
-        "underlying_price": r["close"],
-        "note": "Mark-to-market for options has no Turso model yet (no options-pricing table) — "
-                "estimate via Black-Scholes against underlying_price as the wiki page already does.",
+        "premium": r["premium"], "contracts": r["contracts"], "shares": r["shares"],
+        "premium_flow": r["premium_flow"],
+        "underlying_price": r["close"], "underlying_price_date": r["price_date"],
+        # Mark-to-market computed daily by options_pricing.py (added
+        # 2026-09-14) into `option_marks` — Black-Scholes off the underlying's
+        # own tracked price, using historical volatility as an IV proxy (no
+        # live options-chain/IV source exists in this pipeline; see that
+        # script's docstring). `mark_date` may lag `price_date` if
+        # options_pricing.py hasn't run yet today — check it before treating
+        # premium_estimate as fresh.
+        "premium_estimate": r["premium_estimate"],
+        "mkt_value": r["option_mkt_value"],
+        "unrealized_pnl": r["option_unrealized_pnl"],
+        "volatility_used": r["volatility"], "time_to_expiry_years": r["time_to_expiry_years"],
+        "mark_date": r["mark_date"],
+        "note": (None if r["premium_estimate"] is not None else
+                 "No mark yet for this position — options_pricing.py hasn't priced it "
+                 "(check for a 'skipped' entry in its own output, e.g. insufficient "
+                 "yfinance history for the underlying)."),
     } for r in option_positions]
 
     return {
