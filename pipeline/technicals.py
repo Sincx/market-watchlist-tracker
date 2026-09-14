@@ -161,6 +161,12 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> None:
             "macd_signal": ind["macd"],
             "vol_ratio": ind["vol_ratio"] if isinstance(ind["vol_ratio"], (int, float)) else None,
             "technical_rating": ind["rating"],
+            # atr14 IS computed by indicators.compute_all() (indicators.atr(),
+            # Wilder's ATR) but was silently dropped here — never written to
+            # Turso at all despite being fully available. Found 2026-09-14
+            # migrating portfolio-management-briefing's stop-loss calc
+            # (entry − 1.5×ATR14) to read Turso instead of portfolio_update.py.
+            "atr14": ind["atr14"] if isinstance(ind["atr14"], (int, float)) else None,
             "fetched_at": fetched_at,
         })
 

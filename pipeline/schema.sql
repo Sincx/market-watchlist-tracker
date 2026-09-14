@@ -36,6 +36,8 @@ CREATE TABLE prices (
     currency TEXT, usd_rate REAL,
     ma20 REAL, ma50 REAL, ma200 REAL, rsi14 REAL, macd_signal TEXT,
     vol_ratio REAL, technical_rating TEXT, fetched_at TEXT,
+    atr14 REAL,   -- Wilder's ATR14 (indicators.py already computed this; was never
+                  -- persisted until 2026-09-14). Used for stop-loss sizing (entry − 1.5×ATR14).
     PRIMARY KEY (ticker, exchange, date)
 );
 
