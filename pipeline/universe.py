@@ -353,6 +353,30 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     ("ZOE", "EU", "ZOE.DE", "EUR"),   # Zoetis's Xetra listing — "ZOE" + ".DE" is the real symbol
 ]
 
+# Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
+# for comparison, not screened/traded. Added 2026-09-19 (Recommended Trades
+# spec §2, SPY) after this run()'s own stale-row deactivation silently
+# flipped SPY to active=0 the very next refresh — it had been added via a
+# one-off manual upsert, exactly the failure mode this file's own comment on
+# the deactivation logic already warned about ("if a manual entry is added
+# directly, this would need to scope the deactivation"). This is that fix:
+# a real source function, not a one-off row, so future refreshes keep it live.
+BENCHMARK_TICKERS = [
+    # ticker, exchange, yahoo_ticker, currency
+    ("SPY", "US", "SPY", "USD"),
+]
+
+
+def fetch_benchmarks() -> list[dict]:
+    rows = []
+    for ticker, exchange, yahoo_ticker, currency in BENCHMARK_TICKERS:
+        rows.append({
+            "ticker": ticker, "exchange": exchange, "index_membership": "BENCHMARK",
+            "yahoo_ticker": yahoo_ticker, "currency": currency,
+            "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
+        })
+    return rows
+
 
 def fetch_portfolio_specific() -> list[dict]:
     rows = []
@@ -452,6 +476,7 @@ def run(dry_run: bool = False) -> None:
         ("crypto", fetch_crypto),
         ("wiki-mentioned", fetch_wiki_mentioned),
         ("portfolio-specific", fetch_portfolio_specific),
+        ("benchmarks", fetch_benchmarks),
     ]:
         try:
             rows = fetch_fn()
