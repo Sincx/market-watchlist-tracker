@@ -219,6 +219,20 @@ CREATE TABLE task_registry (
     last_run_at TEXT, last_run_status TEXT
 );
 
+-- ── Row-level pipeline health (Master spec Phase 13) ──────────────────────────
+-- task_registry answers "did the job run"; this answers "which specific
+-- tickers failed" — today that requires reading logs by hand. Every
+-- deterministic job upserts one row per ticker per run.
+
+CREATE TABLE data_quality (
+    ticker TEXT, exchange TEXT,
+    data_type TEXT,             -- 'technicals' | 'fundamentals' | 'screen' | 'option_mark'
+    last_attempt_at TEXT, last_success_at TEXT, last_source TEXT,
+    status TEXT,                 -- 'ok' | 'degraded' (fell back) | 'error' (all sources failed)
+    error_message TEXT, consecutive_failures INTEGER DEFAULT 0,
+    PRIMARY KEY (ticker, exchange, data_type)
+);
+
 -- ── Views for the queryable layer ────────────────────────────────────────────
 
 -- sector here is f.sector (fundamentals, FMP/scrape-sourced) — the SAME
