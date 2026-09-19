@@ -64,8 +64,18 @@ CREATE TABLE signals (
                            -- | 'investor:<investor_id>' | 'manual' | 'llm-research' (Phase 2 P2.0b —
                            -- a judgment task's own WebSearch/WebFetch finding, persisted before the
                            -- narrative is written, so it becomes a queryable fact like every other source)
+                           -- | 'briefing-recommendation' (Phase 3 spec, 2026-09-19 — the briefing's
+                           -- own structured new-position idea, shared write path with the
+                           -- Recommended Trades spec's mechanical shadow portfolio)
     detail TEXT,           -- JSON: fair_value, discount_pct, stars, moat, direction, etc.
-    flagged_date TEXT, source_ref TEXT   -- link to the wiki page this came from
+    flagged_date TEXT, source_ref TEXT,   -- link to the wiki page this came from
+    -- Pending-idea lifecycle — applies only to source='briefing-recommendation'
+    -- rows; every other source's rows just keep the 'new' default forever,
+    -- meaningless but harmless (Pending Trade Ideas only ever queries on
+    -- source AND status together, so old rows never leak in regardless of
+    -- their status value). Added via live ALTER TABLE 2026-09-19.
+    status TEXT DEFAULT 'new',   -- 'new' | 'approved' | 'rejected' | 'snoozed' | 'expired'
+    status_updated_at TEXT
 );
 
 -- ── Strategies, generalized across instrument types ─────────────────────────
@@ -81,8 +91,12 @@ CREATE TABLE strategies (
 
 CREATE TABLE portfolios (
     portfolio_id TEXT PRIMARY KEY, name TEXT,
-    kind TEXT,              -- 'real' | 'paper' | 'shadow'
+    kind TEXT,              -- 'real' | 'paper' | 'shadow' | 'recommended' (Recommended Trades
+                             -- spec, 2026-09-19 — mechanically mirrors the briefing's own
+                             -- recommendations, no discretion, vs. 'shadow' mirroring a
+                             -- disclosed investor's positions)
     mirrors_investor_id TEXT,   -- NULL unless kind='shadow'
+    mirrors_portfolio_id TEXT,  -- NULL unless kind='recommended' — added via live ALTER TABLE 2026-09-19
     base_currency TEXT, created_date TEXT, active INTEGER DEFAULT 1
 );
 
@@ -276,6 +290,25 @@ CREATE TABLE fx_rates (
     date TEXT NOT NULL, currency TEXT NOT NULL, usd_rate REAL NOT NULL,
     PRIMARY KEY (date, currency)
 );
+
+-- Phase 3 spec (2026-09-19) §3.2 — signal-strengthened candidate ranking:
+-- a Magic Formula pass corroborated by one or more independent signals
+-- (morningstar-undervalued, investor:burry, a wiki-mention, etc.) should be
+-- presented and ranked as higher-conviction than a screen-only pass. Uses
+-- correlated subqueries with COUNT(DISTINCT source)/GROUP_CONCAT(DISTINCT
+-- source) rather than the spec's own literal GROUP BY mf.*/GROUP_CONCAT —
+-- that form is ambiguous SQL (GROUP BY on ticker/exchange while selecting
+-- mf.*'s other columns) and the spec's own "Open risks" flagged the exact
+-- double-counting bug this form would have if a ticker got the same source
+-- more than once (e.g. two separate Morningstar mentions) — DISTINCT here
+-- avoids both problems from the start rather than fixing them later.
+CREATE VIEW v_investment_opportunities AS
+SELECT mf.*,
+       (SELECT GROUP_CONCAT(DISTINCT s.source) FROM signals s
+        WHERE s.ticker = mf.ticker AND s.exchange = mf.exchange) AS corroborating_signals,
+       (SELECT COUNT(DISTINCT s.source) FROM signals s
+        WHERE s.ticker = mf.ticker AND s.exchange = mf.exchange) AS signal_count
+FROM v_magic_formula_latest mf;
 
 -- Phase 2 (P2.0c): most recent signal per ticker, used by both the universe
 -- and screener API routes so neither has to re-derive this with a correlated
