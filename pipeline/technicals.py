@@ -32,7 +32,7 @@ import yfinance as yf
 import data_quality as dq
 import db
 import indicators
-from fetchers import fetch_fx_rates
+from fetchers import fetch_fx_rates, _expected_last_trading_day
 
 CHUNK_SIZE = 150
 CHUNK_RETRY_DELAY = 5.0
@@ -146,6 +146,17 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple
     bars_by_yahoo = fetch_batch(yahoo_tickers)
 
     fetched_at = datetime.now(timezone.utc).isoformat()
+    # Real gap found 2026-09-19 (Master spec Phase 14's parallel-diff tool):
+    # ASML(EU) recorded data_quality status='ok' for 3 straight days while
+    # its actual prices.date sat stuck on the same stale bar — "got some
+    # bars from yfinance" and "got a bar for the expected trading day" are
+    # different things, and only the first was being checked. yfinance's
+    # own coverage gap for this specific ticker (not a bug in this script)
+    # meant every "successful" fetch was silently re-returning the same old
+    # close. Skipped for crypto — it trades 24/7, the US-market weekday
+    # calendar this check reuses (fetchers._expected_last_trading_day())
+    # would wrongly flag every Saturday/Sunday fetch as stale.
+    expected_trading_day = _expected_last_trading_day()
     price_rows = []
     dq_rows = []
     skipped_no_data = 0
@@ -171,9 +182,13 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple
                              "status": "error", "error": "indicators.compute_all() returned nothing"})
             continue
 
-        dq_rows.append({"ticker": u["ticker"], "exchange": u["exchange"], "data_type": "technicals",
-                         "status": "ok", "source": "yfinance"})
         latest = bars[0]
+        is_stale = u["exchange"] != "CRYPTO" and latest["date"] < expected_trading_day
+        dq_rows.append({
+            "ticker": u["ticker"], "exchange": u["exchange"], "data_type": "technicals",
+            "status": "degraded" if is_stale else "ok", "source": "yfinance",
+            "error": f"latest bar {latest['date']} predates expected trading day {expected_trading_day}" if is_stale else None,
+        })
         price_rows.append({
             "ticker": u["ticker"], "exchange": u["exchange"], "date": latest["date"],
             "open": latest["open"], "high": latest["high"], "low": latest["low"],
