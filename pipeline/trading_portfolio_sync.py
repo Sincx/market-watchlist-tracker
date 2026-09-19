@@ -29,13 +29,46 @@ Run standalone for manual corrections:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import date
 
 import db
+from fetchers import fetch_fx_rates
 
 PORTFOLIO_ID = "trading-portfolio"
 TODAY = date.today().isoformat()
+
+
+def _to_eur(amount: float, currency: str, fx: dict) -> float:
+    """Convert a native-currency amount to EUR via the USD cross-rate every
+    fetch_fx_rates() entry already carries (usd_rate = USD per 1 unit of
+    that currency). GBX (pence) is first scaled to its GBP value.
+    """
+    native = amount * 0.01 if currency == "GBX" else amount
+    base_ccy = "GBP" if currency == "GBX" else currency
+    if base_ccy == "EUR":
+        return native
+    usd_rate = fx.get(base_ccy)
+    eur_usd_rate = fx.get("EUR")
+    if not usd_rate or not eur_usd_rate:
+        raise ValueError(f"No FX rate available for {base_ccy} — cannot convert to EUR")
+    return native * usd_rate / eur_usd_rate
+
+
+def _write_cash_entry(client, entry_date: str, amount: float, entry_type: str, trade_id: str | None, note: str) -> None:
+    """Trading Portfolio's cash_ledger convention (schema.sql, backfilled
+    2026-09-19 via trading_cash_backfill.py): opening a short writes NO
+    entry (margin, not cash); a long buy/sell is an ordinary cash movement;
+    a short close's REALIZED P&L only is one 'short_close_pnl' entry.
+    Amount is always EUR — the portfolio's base_currency — never the
+    trade's own native currency.
+    """
+    entry_id = "tp-cash-" + hashlib.sha1(f"{entry_date}|{trade_id}|{entry_type}|{amount}".encode()).hexdigest()[:16]
+    db.upsert(client, "cash_ledger", [{
+        "entry_id": entry_id, "portfolio_id": PORTFOLIO_ID, "entry_date": entry_date,
+        "amount": round(amount, 2), "entry_type": entry_type, "trade_id": trade_id, "note": note,
+    }])
 
 
 def _get_open_trade(client, ticker: str, exchange: str) -> dict:
@@ -54,8 +87,9 @@ def _get_open_trade(client, ticker: str, exchange: str) -> dict:
 def record_open(ticker: str, exchange: str, direction: str, entry_price: float, shares: float,
                  currency: str, instrument_type: str = "equity", thesis: str | None = None,
                  dry_run: bool = False) -> dict:
+    trade_id = f"{PORTFOLIO_ID}-{ticker}-{direction}-{TODAY}"
     row = {
-        "trade_id": f"{PORTFOLIO_ID}-{ticker}-{direction}-{TODAY}",
+        "trade_id": trade_id,
         "portfolio_id": PORTFOLIO_ID, "ticker": ticker, "exchange": exchange,
         "instrument_type": instrument_type, "direction": direction,
         "entry_date": TODAY, "entry_price": entry_price, "shares": shares, "currency": currency,
@@ -66,6 +100,17 @@ def record_open(ticker: str, exchange: str, direction: str, entry_price: float, 
     client = db.get_client()
     try:
         db.upsert(client, "trades", [row])
+        # Cash convention (schema.sql): a long buy debits cash; opening a
+        # short posts margin, not cash, so it writes no ledger row at all.
+        # Options aren't cash-ledger-integrated here yet — no premium/
+        # contracts params on this path, and no evidence this script is
+        # used for option opens today (the 2 existing option positions came
+        # from the Phase 7c backfill) — a real gap if that changes, not
+        # silently guessed at.
+        if direction == "long" and instrument_type == "equity":
+            fx = fetch_fx_rates()
+            amount_eur = -_to_eur(entry_price * shares, currency, fx)
+            _write_cash_entry(client, TODAY, amount_eur, "buy", trade_id, f"{ticker} buy")
     finally:
         client.close()
     return {"written": row}
@@ -102,6 +147,16 @@ def record_trim(ticker: str, exchange: str, trim_shares: float, trim_price: floa
             "UPDATE trades SET shares = :s WHERE trade_id = :id;",
             {"s": remaining, "id": open_trade["trade_id"]},
         )
+        currency = open_trade["currency"]
+        fx = fetch_fx_rates() if currency != "EUR" else {}
+        if open_trade["direction"] == "long":
+            amount_eur = _to_eur(trim_price * trim_shares, currency, fx) if currency != "EUR" else trim_price * trim_shares
+            _write_cash_entry(client, TODAY, amount_eur, "sell", closed_row["trade_id"], f"{ticker} trim")
+        else:
+            realized_native = (open_trade["entry_price"] - trim_price) * trim_shares
+            amount_eur = _to_eur(realized_native, currency, fx) if currency != "EUR" else realized_native
+            _write_cash_entry(client, TODAY, amount_eur, "short_close_pnl", closed_row["trade_id"],
+                               f"{ticker} short trim close, realized {'gain' if amount_eur >= 0 else 'loss'}")
     finally:
         client.close()
     return {"closed": closed_row, "open_shares_now": remaining}
@@ -121,6 +176,17 @@ def record_full_exit(ticker: str, exchange: str, exit_price: float, dry_run: boo
             "UPDATE trades SET status = 'closed', exit_date = :d, exit_price = :p WHERE trade_id = :id;",
             {"d": TODAY, "p": exit_price, "id": open_trade["trade_id"]},
         )
+        currency = open_trade["currency"]
+        fx = fetch_fx_rates() if currency != "EUR" else {}
+        shares = open_trade["shares"]
+        if open_trade["direction"] == "long":
+            amount_eur = _to_eur(exit_price * shares, currency, fx) if currency != "EUR" else exit_price * shares
+            _write_cash_entry(client, TODAY, amount_eur, "sell", open_trade["trade_id"], f"{ticker} exit")
+        else:
+            realized_native = (open_trade["entry_price"] - exit_price) * shares
+            amount_eur = _to_eur(realized_native, currency, fx) if currency != "EUR" else realized_native
+            _write_cash_entry(client, TODAY, amount_eur, "short_close_pnl", open_trade["trade_id"],
+                               f"{ticker} short close, realized {'gain' if amount_eur >= 0 else 'loss'}")
     finally:
         client.close()
     return {"closed": {"trade_id": open_trade["trade_id"], "exit_date": TODAY, "exit_price": exit_price}}
