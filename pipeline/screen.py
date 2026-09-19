@@ -18,6 +18,7 @@ import argparse
 import uuid
 from datetime import date
 
+import data_quality as dq
 import db
 from config import MF_THRESHOLDS
 
@@ -157,6 +158,18 @@ def run_screen(dry_run: bool = False) -> None:
         if signal_rows:
             n2 = db.upsert(client, "signals", signal_rows)
             print(f"Upserted {n2} rows into signals (magic-formula-pass).")
+
+        # 'ok' here means "screen.py successfully derived a real outcome for
+        # this ticker" — ranked-and-passing, ranked-not-passing, or correctly
+        # excluded by sector/non-positive EY-ROIC are all legitimate
+        # categorizations, not data-quality failures. A ticker with no
+        # fundamentals row at all never reaches fund_rows in the first place
+        # (data_type='fundamentals' already covers that gap) — recording it
+        # again here would be redundant, not additive.
+        dq_rows = [{"ticker": r["ticker"], "exchange": r["exchange"], "data_type": "screen", "status": "ok"}
+                   for r in fund_rows]
+        dq.record_batch(client, dq_rows)
+        print(f"Recorded data_quality for {len(dq_rows)} tickers.")
     finally:
         client.close()
 

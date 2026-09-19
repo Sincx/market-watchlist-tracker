@@ -162,6 +162,26 @@ def _report(group: str, with_pe: bool = False) -> dict:
 
 if __name__ == "__main__":
     import json
+
+    import data_quality as dq
+    import db
+
     group = sys.argv[1] if len(sys.argv) > 1 else "style"
     with_pe = "--pe" in sys.argv
-    print(json.dumps(_report(group, with_pe=with_pe), indent=2))
+    report = _report(group, with_pe=with_pe)
+    print(json.dumps(report, indent=2))
+
+    # Recorded only for the CLI/scheduled-task entry point, not the
+    # importable fetch_quarterly_returns()/_report() functions themselves —
+    # candidates.py imports those directly for its own per-candidate use,
+    # and a Turso write on every such call would be a surprise side effect
+    # for a caller that never asked for one.
+    client = db.get_client()
+    try:
+        dq_rows = [{"ticker": t, "exchange": "US", "data_type": "etf_returns",
+                    "status": "ok" if e.get("latest_close") is not None else "error",
+                    "error": None if e.get("latest_close") is not None else "no quarterly returns computed"}
+                   for t, e in report.items()]
+        dq.record_batch(client, dq_rows)
+    finally:
+        client.close()

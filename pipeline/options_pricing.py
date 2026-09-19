@@ -46,6 +46,7 @@ import json
 import math
 from datetime import date
 
+import data_quality as dq
 import db
 from fetchers import fetch_yfinance
 
@@ -129,20 +130,20 @@ def price_options(dry_run: bool = False) -> list[dict]:
             ticker, exchange = opt["ticker"], opt["exchange"]
             underlying = _get_latest_underlying(client, ticker, exchange)
             if underlying is None:
-                results.append({"trade_id": opt["trade_id"], "skipped": "no underlying price in Turso"})
+                results.append({"trade_id": opt["trade_id"], "ticker": ticker, "exchange": exchange, "skipped": "no underlying price in Turso"})
                 continue
             if opt["strike"] is None or opt["expiry_date"] is None or opt["option_type"] is None:
-                results.append({"trade_id": opt["trade_id"], "skipped": "missing strike/expiry/option_type"})
+                results.append({"trade_id": opt["trade_id"], "ticker": ticker, "exchange": exchange, "skipped": "missing strike/expiry/option_type"})
                 continue
 
             yahoo_ticker = _get_yahoo_ticker(client, ticker, exchange)
             if yahoo_ticker is None:
-                results.append({"trade_id": opt["trade_id"], "skipped": "no yahoo_ticker in universe for underlying"})
+                results.append({"trade_id": opt["trade_id"], "ticker": ticker, "exchange": exchange, "skipped": "no yahoo_ticker in universe for underlying"})
                 continue
             closes = _get_trailing_closes(yahoo_ticker)
             sigma = historical_volatility(closes)
             if sigma is None:
-                results.append({"trade_id": opt["trade_id"],
+                results.append({"trade_id": opt["trade_id"], "ticker": ticker, "exchange": exchange,
                                  "skipped": f"only {len(closes)} yfinance closes for {yahoo_ticker}, need {MIN_VOL_POINTS}+ returns"})
                 continue
 
@@ -159,7 +160,7 @@ def price_options(dry_run: bool = False) -> list[dict]:
                                if premium_paid is not None else None)
 
             results.append({
-                "trade_id": opt["trade_id"], "date": TODAY,
+                "trade_id": opt["trade_id"], "ticker": ticker, "exchange": exchange, "date": TODAY,
                 "underlying_price": round(S, 4), "underlying_price_date": underlying["date"],
                 "volatility": round(sigma, 4), "time_to_expiry_years": round(T, 4),
                 "risk_free_rate": RISK_FREE_RATE,
@@ -170,9 +171,14 @@ def price_options(dry_run: bool = False) -> list[dict]:
             })
 
         if not dry_run:
-            writable = [r for r in results if "skipped" not in r]
+            writable = [{k: v for k, v in r.items() if k not in ("ticker", "exchange")}
+                        for r in results if "skipped" not in r]
             if writable:
                 db.upsert(client, "option_marks", writable)
+            dq_rows = [{"ticker": r["ticker"], "exchange": r["exchange"], "data_type": "option_mark",
+                        "status": "error" if "skipped" in r else "ok", "error": r.get("skipped")}
+                       for r in results]
+            dq.record_batch(client, dq_rows)
     finally:
         client.close()
     return results

@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import yfinance as yf
 
+import data_quality as dq
 import db
 import indicators
 from fetchers import fetch_fx_rates
@@ -146,11 +147,14 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     price_rows = []
+    dq_rows = []
     skipped_no_data = 0
     for u in universe_rows:
         bars = bars_by_yahoo.get(u["yahoo_ticker"])
         if not bars:
             skipped_no_data += 1
+            dq_rows.append({"ticker": u["ticker"], "exchange": u["exchange"], "data_type": "technicals",
+                             "status": "error", "error": "no bars from yfinance batch"})
             continue
         closes = [b["close"] for b in bars]
         opens = [b["open"] for b in bars]
@@ -163,8 +167,12 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple
         ind = indicators.compute_all(closes, opens, highs, lows, volumes, currency=currency, usd_rate=usd_rate)
         if not ind:
             skipped_no_data += 1
+            dq_rows.append({"ticker": u["ticker"], "exchange": u["exchange"], "data_type": "technicals",
+                             "status": "error", "error": "indicators.compute_all() returned nothing"})
             continue
 
+        dq_rows.append({"ticker": u["ticker"], "exchange": u["exchange"], "data_type": "technicals",
+                         "status": "ok", "source": "yfinance"})
         latest = bars[0]
         price_rows.append({
             "ticker": u["ticker"], "exchange": u["exchange"], "date": latest["date"],
@@ -199,6 +207,8 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple
     try:
         n = db.upsert(client, "prices", price_rows)
         print(f"Upserted {n} rows into prices.")
+        dq.record_batch(client, dq_rows)
+        print(f"Recorded data_quality for {len(dq_rows)} tickers.")
     finally:
         client.close()
     return len(price_rows), len(universe_rows)

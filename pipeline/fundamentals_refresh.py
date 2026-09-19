@@ -22,6 +22,7 @@ import argparse
 import sys
 from datetime import date
 
+import data_quality as dq
 import db
 from fundamentals import fetch_fundamentals
 
@@ -70,32 +71,41 @@ def refresh_fundamentals(dry_run: bool = False, limit: int | None = None, exchan
 
     write_client = None if dry_run else db.get_client()
     pending: list[dict] = []
+    dq_pending: list[dict] = []
     written_total = 0
     fetched_total = 0
     skipped = 0
 
     def flush():
-        nonlocal pending, written_total
+        nonlocal pending, dq_pending, written_total
         if pending and write_client:
             n = db.upsert(write_client, "fundamentals", pending)
             written_total += n
-        pending = []
+        if dq_pending and write_client:
+            dq.record_batch(write_client, dq_pending)
+        pending, dq_pending = [], []
 
     try:
         for i, u in enumerate(universe_rows):
             ticker, exch, sa_prefix = u["ticker"], u["exchange"], u.get("sa_prefix")
             if exch in ("UK", "EU") and not sa_prefix:
                 skipped += 1
+                dq_pending.append({"ticker": ticker, "exchange": exch, "data_type": "fundamentals",
+                                    "status": "error", "error": "no sa_prefix"})
                 continue
             try:
                 fund = fetch_fundamentals(ticker, exch, sa_prefix or "")
             except Exception as e:
                 print(f"  {ticker} ({exch}): error {e}", file=sys.stderr)
                 skipped += 1
+                dq_pending.append({"ticker": ticker, "exchange": exch, "data_type": "fundamentals",
+                                    "status": "error", "error": f"{type(e).__name__}: {e}"[:500]})
                 continue
 
             if not fund or not any(v is not None for k, v in fund.items() if k != "source"):
                 skipped += 1
+                dq_pending.append({"ticker": ticker, "exchange": exch, "data_type": "fundamentals",
+                                    "status": "error", "error": "no data from any source"})
                 continue
 
             fetched_total += 1
@@ -108,6 +118,15 @@ def refresh_fundamentals(dry_run: bool = False, limit: int | None = None, exchan
                 "roic": fund.get("roic"), "roe": fund.get("roe"), "ev_ebit": fund.get("ev_ebit"),
                 "source": fund.get("source"), "fetched_at": TODAY,
             }
+            # fetch_fundamentals' own chain (fundamentals.py): FMP opportunistic,
+            # then stockanalysis.com (the two normal, expected paths — 'ok'),
+            # then Shibui only when "FMP + stockanalysis both empty" — the
+            # documented last-resort fallback, genuinely 'degraded' rather
+            # than a clean primary-source hit.
+            source = fund.get("source") or ""
+            dq_status = "degraded" if source == "shibui" else "ok"
+            dq_pending.append({"ticker": ticker, "exchange": exch, "data_type": "fundamentals",
+                                "status": dq_status, "source": fund.get("source")})
             if dry_run:
                 if fetched_total <= 10:
                     print(" ", row)
