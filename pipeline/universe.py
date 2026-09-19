@@ -351,6 +351,18 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     # ticker (as trades.ticker already has it), exchange, real yahoo_ticker, currency
     ("ACN", "EU", "CSA.DE", "EUR"),   # Accenture's Xetra listing trades as "CSA" on Yahoo
     ("ZOE", "EU", "ZOE.DE", "EUR"),   # Zoetis's Xetra listing — "ZOE" + ".DE" is the real symbol
+    # Added 2026-09-19 — Equity Portfolio holdings with no current price on the
+    # dashboard: none of these are S&P 500/STOXX 600/FTSE constituents, so
+    # fetch_sp500/fetch_stoxx600/fetch_ftse350 never picked them up.
+    ("MSTR", "US", "MSTR", "USD"),    # Strategy Inc (formerly MicroStrategy) — not an S&P 500 member
+    ("NGLOY", "US", "NGLOY", "USD"),  # Anglo American plc — OTC ADR, no major US index
+    ("GLNCY", "US", "GLNCY", "USD"),  # Glencore plc — OTC ADR, no major US index
+    # "CHIP" bare/plain and CHIP.L both resolve to unrelated instruments
+    # (CHIP.L is KraneShares' S&P China 500 UCITS ETF, not semiconductors) —
+    # verified live that CHIP.PA/.MI/.SW all resolve to the actual Amundi MSCI
+    # Semiconductors UCITS ETF; used the Paris listing to match this trade's
+    # existing exchange='EU' tag and EUR currency.
+    ("CHIP", "EU", "CHIP.PA", "EUR"),  # Amundi MSCI Semiconductors UCITS ETF, Euronext Paris listing
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
