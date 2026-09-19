@@ -24,6 +24,7 @@ from fetchers import (
     fetch_us_ticker,
     fetch_ftse_ticker,
     fetch_eu_morningstar_ticker,
+    StaleDataError,
 )
 from indicators import compute_all
 import sheets
@@ -54,7 +55,11 @@ def _process_us_ticker(ticker, group_name, cfg, fx):
         return None
     idx = cfg["tickers"].index(ticker)
     sheet_row = cfg["start_row"] + idx
-    closes, opens, highs, lows, volumes = fetch_us_ticker(ticker)
+    try:
+        closes, opens, highs, lows, volumes = fetch_us_ticker(ticker)
+    except StaleDataError as e:
+        _log(f"  {ticker}: STALE DATA, skipping — {e}")
+        return None
     if not closes:
         _log(f"  {ticker}: no data")
         return None
@@ -74,7 +79,11 @@ def _process_ftse_ticker(ticker, cfg, fx):
     sheet_row = cfg["start_row"] + idx
     dual = cfg.get("dual_listed", set())
     collisions = cfg.get("collision_tickers", set())
-    closes, opens, highs, lows, volumes, price_ccy = fetch_ftse_ticker(ticker, dual, collisions)
+    try:
+        closes, opens, highs, lows, volumes, price_ccy = fetch_ftse_ticker(ticker, dual, collisions)
+    except StaleDataError as e:
+        _log(f"  {ticker}: STALE DATA, skipping — {e}")
+        return None
     if not closes:
         _log(f"  {ticker}: no data")
         return None
@@ -95,7 +104,11 @@ def _process_eu_ms_ticker(ticker, cfg, fx):
     sheet_row = cfg["start_row"] + idx
     yahoo_ticker = cfg["yahoo_map"][ticker]
     currency = cfg["currency_map"].get(ticker, "EUR")
-    closes, opens, highs, lows, volumes = fetch_eu_morningstar_ticker(ticker, yahoo_ticker)
+    try:
+        closes, opens, highs, lows, volumes = fetch_eu_morningstar_ticker(ticker, yahoo_ticker)
+    except StaleDataError as e:
+        _log(f"  {ticker}: STALE DATA, skipping — {e}")
+        return None
     if not closes:
         _log(f"  {ticker}: no data")
         return None

@@ -35,6 +35,7 @@ BURRY_POSITIONS = {
     "JD":   "Long",   # JD.com — one of two largest positions (with ADBE); first disclosed Aug 6, no entry price given
     "LULU": "Long",   # lululemon — full position added Jul 30 (~$118); added again Aug 7 at $127.45; already tracked in Morningstar-US group, flag only
     "FMCC": "Long",   # Freddie Mac — new position added Aug 7 at $5.43; GSE reform/IPO-delay thesis
+    "FNMA": "Long",   # Fannie Mae — "Toxic Twins" pairing with FMCC; first explicitly named by ticker Sep 9, 2026 Trading Post
     "BBW":  "Long",   # Build-A-Bear Workshop — pre-existing position, first disclosed Aug 27; BBW Part 1 (Aug 29) covers thesis history; 10-Q still pending as of Aug 29
     "BIRK": "Long",   # Birkenstock — full 5.2% position by mid-Aug ($35s); added to again Aug 26 (mid-$30s); "favorite shoe since high school"
     "SFM":  "Long",   # Sprouts Farmers Market — full 5.2% position added ~Aug 20 (high $70s); PE-takeout candidate thesis
@@ -150,6 +151,7 @@ TICKER_DISPLAY_INDEX = {
     "MELI":   "NASDAQ 100",  # Mercado Libre — long first disclosed Aug 6 Trading Post
     "JD":     "NASDAQ 100",  # JD.com — long first disclosed Aug 6 Trading Post
     "FMCC":   "OTC",         # Freddie Mac — OTC Pink, no major index; long added Aug 7 Trading Post
+    "FNMA":   "OTC",         # Fannie Mae — OTC Pink, no major index; "Toxic Twins" pairing with FMCC, first named Sep 9 Trading Post
     "BBW":    "NYSE",        # Build-A-Bear Workshop — NYSE, not in a major index; long first disclosed Aug 27 Trading Post
     "BIRK":   "NYSE",        # Birkenstock Holding — NYSE, not in a major index; long, full 5.2% position by mid-Aug
     "SFM":    "NASDAQ 100",  # Sprouts Farmers Market — NASDAQ 100 constituent; long, full 5.2% position ~Aug 20
@@ -283,7 +285,7 @@ GROUPS = {
         ],
     },
     # Stocks mentioned by Michael Burry in his 2026 Substack trading posts and SW50 series.
-    # Active positions: FLUT/DKNG/MOH/HCA/BABA/PYPL/VEEV/FISV/MELI/JD/FMCC/BBW/BIRK/SFM (longs);
+    # Active positions: FLUT(closed Sep 11)/DKNG/MOH/HCA/BABA/PYPL/VEEV/FISV/MELI/JD/FMCC/FNMA/BBW/BIRK/SFM (longs);
     #   MU/PLTR/NBIS/ORCL/CRWV (shorts/puts).
     # SW50 analyses: software & payments valuation series (Parts 1–2).
     # Excludes: NVDA/CAT/TSLA/ORCL/ADBE/INTU/CRM/ZTS/LULU (already tracked in other groups).
@@ -313,6 +315,8 @@ GROUPS = {
             "BBW",
             # Aug 18-20, 2026 Trading Post & Short Thoughts — new longs (BIRK, SFM); new short (CRWV)
             "BIRK", "SFM", "CRWV",
+            # Sep 9, 2026 Trading Post — FNMA first explicitly named (pre-existing "Toxic Twins" pairing with FMCC)
+            "FNMA",
         ],
     },
 }
