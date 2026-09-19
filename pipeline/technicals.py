@@ -132,6 +132,15 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple
     fx = fetch_fx_rates()
     print(f"FX: {fx}")
 
+    if not dry_run:
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        fx_rows = [{"date": today_str, "currency": ccy, "usd_rate": rate} for ccy, rate in fx.items() if ccy != "GBX"]
+        fxc = db.get_client()
+        try:
+            db.upsert(fxc, "fx_rates", fx_rows)
+        finally:
+            fxc.close()
+
     yahoo_tickers = [r["yahoo_ticker"] for r in universe_rows]
     bars_by_yahoo = fetch_batch(yahoo_tickers)
 

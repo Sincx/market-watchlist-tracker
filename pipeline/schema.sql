@@ -264,6 +264,19 @@ SELECT portfolio_id, SUM(amount) AS cash_balance
 FROM cash_ledger
 GROUP BY portfolio_id;
 
+-- Recommended Trades spec (2026-09-19) §1a — daily USD-per-1-unit rate per
+-- currency, needed to convert a trade's P&L to EUR at ITS OWN entry/exit
+-- date, not just today's rate (Trading Portfolio positions span months,
+-- and FX moves meaningfully over that window even if less than equities
+-- typically do). Backfilled via fx_rates_backfill.py (yfinance historical
+-- daily closes for GBPUSD=X/EURUSD=X/etc.); kept current going forward by
+-- technicals.py's existing daily fetch_fx_rates() call, added there
+-- alongside the historical backfill rather than as a separate daily job.
+CREATE TABLE fx_rates (
+    date TEXT NOT NULL, currency TEXT NOT NULL, usd_rate REAL NOT NULL,
+    PRIMARY KEY (date, currency)
+);
+
 -- Phase 2 (P2.0c): most recent signal per ticker, used by both the universe
 -- and screener API routes so neither has to re-derive this with a correlated
 -- subquery. signal_id is a random UUID (not sortable), so the tiebreaker for
