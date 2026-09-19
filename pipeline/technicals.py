@@ -105,7 +105,15 @@ def fetch_batch(yahoo_tickers: list[str], period: str = "1y") -> dict[str, list[
     return results
 
 
-def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> None:
+def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> tuple[int, int]:
+    """Returns (fetched, universe_count) — used by _run_and_record to report
+    an accurate same-run count to task_registry, rather than re-deriving it
+    from a global MAX(date) query, which conflates this run's coverage with
+    whatever was already in the table (real bug found 2026-09-19 testing
+    this very wrapper — a 30-ticker test run reported "6/30" because most of
+    the 30 test tickers' prices.date already matched an earlier fuller run's
+    MAX(date) from other tickers).
+    """
     client = db.get_client()
     try:
         universe_rows = db.query(
@@ -176,7 +184,7 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> None:
         for row in price_rows[:10]:
             print(" ", row)
         print("  ... (dry run, nothing written)")
-        return
+        return len(price_rows), len(universe_rows)
 
     client = db.get_client()
     try:
@@ -184,6 +192,41 @@ def refresh_technicals(dry_run: bool = False, limit: int | None = None) -> None:
         print(f"Upserted {n} rows into prices.")
     finally:
         client.close()
+    return len(price_rows), len(universe_rows)
+
+
+_TASK_ID = "refresh-technicals"
+_TASK_META = dict(
+    kind="daily",
+    schedule_cron="15 7 * * *",
+    description="Daily — refreshes prices/technical indicators in Turso for the full universe (equities + crypto)",
+    entry_point="technicals.py",
+)
+
+
+def _run_and_record(dry_run: bool, limit: int | None) -> None:
+    """CLI entry point wrapper — records success/failure to task_registry
+    on every real (non-dry-run) invocation, so a scheduled run that crashes
+    partway still leaves a same-day trace instead of silently vanishing.
+    """
+    if dry_run:
+        refresh_technicals(dry_run=dry_run, limit=limit)
+        return
+    try:
+        fetched, universe_count = refresh_technicals(dry_run=False, limit=limit)
+    except Exception as e:
+        c = db.get_client()
+        try:
+            db.record_task_run(c, _TASK_ID, f"error: {type(e).__name__}: {e}", **_TASK_META)
+        finally:
+            c.close()
+        raise
+    else:
+        c = db.get_client()
+        try:
+            db.record_task_run(c, _TASK_ID, f"success: {fetched}/{universe_count} tickers", **_TASK_META)
+        finally:
+            c.close()
 
 
 if __name__ == "__main__":
@@ -191,4 +234,4 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=None, help="Limit to first N universe rows (testing)")
     args = parser.parse_args()
-    refresh_technicals(dry_run=args.dry_run, limit=args.limit)
+    _run_and_record(dry_run=args.dry_run, limit=args.limit)

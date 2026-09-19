@@ -1,6 +1,7 @@
 """Turso (hosted libSQL) client wrapper — the single point of DB access for
 the pipeline. Every module that reads or writes Turso goes through this one.
 """
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -81,3 +82,33 @@ def query(client: libsql_client.ClientSync, sql: str, args=None) -> list[dict]:
     """Run a SELECT and return rows as plain dicts."""
     rs = client.execute(sql, args)
     return [dict(zip(rs.columns, row)) for row in rs.rows]
+
+
+def record_task_run(
+    client: libsql_client.ClientSync,
+    task_id: str,
+    status: str,
+    kind: str | None = None,
+    schedule_cron: str | None = None,
+    description: str | None = None,
+    entry_point: str | None = None,
+) -> None:
+    """Write task_registry's one row for `task_id`. Phase 3 spec (2026-09-19)
+    §3.3 — nothing wrote to this table before, so a scheduled task silently
+    not firing (confirmed live 2026-09-19: refresh-technicals skipped 3
+    straight days with zero visibility anywhere) went undetected for days.
+
+    Full INSERT OR REPLACE (see upsert()'s docstring) — always pass the
+    static metadata fields too, every call, not just on first registration,
+    or they get clobbered to NULL on the next run. `status` is a short
+    string ('success: ...' / 'error: ...') truncated to 500 chars — the
+    schema has one last_run_status TEXT column, no separate error-detail
+    field, deliberately (Phase 3 scoped this as a pipeline-code fix, not a
+    schema change).
+    """
+    upsert(client, "task_registry", [{
+        "task_id": task_id, "kind": kind, "schedule_cron": schedule_cron,
+        "description": description, "entry_point": entry_point,
+        "last_run_at": datetime.now(timezone.utc).isoformat(),
+        "last_run_status": status[:500],
+    }])

@@ -84,7 +84,14 @@ def fetch_prices(ids: list[str]) -> dict[str, float]:
     return {coingecko_id: v["usd"] for coingecko_id, v in data.items() if "usd" in v}
 
 
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False) -> tuple[int, int]:
+    """Returns (written, expected) — used by _run_and_record to report an
+    accurate same-run count to task_registry. Querying prices afterward for
+    "today's CRYPTO rows" would double-count BTC/ETH/LINK, which also land
+    under exchange='CRYPTO' but are written by technicals.py's separate
+    yfinance path — same class of bug found and fixed in technicals.py's
+    own wrapper 2026-09-19, fixed here the same way before it ever shipped.
+    """
     prices_by_id = fetch_prices(list(COINGECKO_IDS.values()))
     fetched_at = datetime.now(timezone.utc).isoformat()
 
@@ -105,7 +112,7 @@ def run(dry_run: bool = False) -> None:
 
     if dry_run:
         print(f"  ... (dry run, {len(rows)} rows not written)")
-        return
+        return len(rows), len(COINGECKO_IDS)
 
     client = db.get_client()
     try:
@@ -113,10 +120,41 @@ def run(dry_run: bool = False) -> None:
         print(f"Upserted {n} rows into prices.")
     finally:
         client.close()
+    return len(rows), len(COINGECKO_IDS)
+
+
+_TASK_ID = "crypto-prices"
+_TASK_META = dict(
+    kind="daily",
+    schedule_cron="30 7 * * *",
+    description="Daily — fetches spot prices for long-tail crypto tokens (EV, LUCKY, TEST) not covered by yfinance",
+    entry_point="crypto_prices.py",
+)
+
+
+def _run_and_record(dry_run: bool) -> None:
+    if dry_run:
+        run(dry_run=True)
+        return
+    try:
+        written, expected = run(dry_run=False)
+    except Exception as e:
+        c = db.get_client()
+        try:
+            db.record_task_run(c, _TASK_ID, f"error: {type(e).__name__}: {e}", **_TASK_META)
+        finally:
+            c.close()
+        raise
+    else:
+        c = db.get_client()
+        try:
+            db.record_task_run(c, _TASK_ID, f"success: {written}/{expected} tickers", **_TASK_META)
+        finally:
+            c.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    run(dry_run=args.dry_run)
+    _run_and_record(dry_run=args.dry_run)
