@@ -21,15 +21,16 @@ Two responsibilities, both pure Python, no LLM cost:
    for this reuse, which is stale as of 2026-09-14's Turso-master switch;
    trading_portfolio_turso_view.py is the current home of that logic).
    Exit: close, no patience-override, ever — the entire point of this
-   book. Trim: the spec's own design left the trim FRACTION unspecified
-   for the mechanical case (real Trading Portfolio trims are Mike's own
-   discretionary 25/50/100%) — a fixed 50% is used here as a disclosed
-   default (matches the "Trim 50%" language already used elsewhere in
-   this system's paper-trading vocabulary), not silently invented. Add:
-   NOT implemented — the spec gives no sizing rule for a mechanical add,
-   and guessing one risks fabricating a number the spec never specified;
-   an Add signal is logged but no trade is written, same principle as
-   every other "known gap, not silently faked" decision in this pipeline.
+   book. Trim: fixed 50% (Mike's explicit confirmation, 2026-09-19, over
+   25%/100% alternatives — the spec's own design left this unspecified
+   for the mechanical case, real Trading Portfolio trims are Mike's own
+   discretionary 25/50/100%). Add: a flat ADD_SIZE_EUR (Mike's explicit
+   confirmation, 2026-09-19, of a "same as normal position sizing"
+   default — the spec gave no sizing rule for a mechanical add) — one
+   new lot (separate trade row, same convention as a real add), capped
+   to at most one add-lot per ticker per ADD_COOLDOWN_DAYS so a signal
+   that stays true for a week of consecutive runs doesn't add every
+   single day.
 
 Run standalone: python recommended_trades_sync.py [--dry-run]
 """
@@ -37,7 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import db
 from fetchers import fetch_fx_rates
@@ -46,6 +47,8 @@ from trading_portfolio_turso_view import _signal, _to_eur, _gbx_scale
 PORTFOLIO_ID = "recommended-trades"
 TODAY = date.today().isoformat()
 TRIM_FRACTION = 0.5
+ADD_SIZE_EUR = 1000.0
+ADD_COOLDOWN_DAYS = 7
 
 
 def seed_new_recommendations(fx: dict, dry_run: bool = False) -> list[dict]:
@@ -118,7 +121,7 @@ def apply_mechanical_signals(fx: dict, dry_run: bool = False) -> dict:
                                if r["shares"] is not None and r["close"] is not None else None)
         total_eur = sum(r["eur_value"] for r in rows if r["eur_value"] is not None)
 
-        exited, trimmed, held = [], [], []
+        exited, trimmed, added, held = [], [], [], []
         for r in rows:
             if r["close"] is None:
                 continue
@@ -147,10 +150,36 @@ def apply_mechanical_signals(fx: dict, dry_run: bool = False) -> dict:
                     client.execute("UPDATE trades SET shares = :s WHERE trade_id = :id;",
                                     {"s": remaining, "id": r["trade_id"]})
                 trimmed.append({"ticker": r["ticker"], "trim_shares": trim_shares, "trim_price": r["close"]})
+            elif sig == "Add":
+                cutoff = (date.today() - timedelta(days=ADD_COOLDOWN_DAYS)).isoformat()
+                recent_adds = db.query(client, """
+                    SELECT 1 FROM trades
+                    WHERE portfolio_id = :pid AND ticker = :t AND exchange = :e
+                      AND trade_id LIKE :pattern AND entry_date >= :cutoff;
+                """, {"pid": PORTFOLIO_ID, "t": r["ticker"], "e": r["exchange"],
+                      "pattern": f"{PORTFOLIO_ID}-{r['ticker']}-{r['exchange']}-add-%", "cutoff": cutoff})
+                if recent_adds:
+                    added.append({"ticker": r["ticker"], "skipped": f"added within last {ADD_COOLDOWN_DAYS}d"})
+                    continue
+                native_add_size = ADD_SIZE_EUR if r["currency"] == "EUR" else (
+                    ADD_SIZE_EUR * fx.get("EUR", 1.0) / fx.get("GBP" if r["currency"] == "GBX" else r["currency"], 1.0)
+                    * (100 if r["currency"] == "GBX" else 1)
+                )
+                add_shares = int(native_add_size // r["close"])
+                if add_shares >= 1:
+                    add_trade_id = f"{PORTFOLIO_ID}-{r['ticker']}-{r['exchange']}-add-{TODAY}"
+                    if not dry_run:
+                        db.upsert(client, "trades", [{
+                            "trade_id": add_trade_id, "portfolio_id": PORTFOLIO_ID,
+                            "ticker": r["ticker"], "exchange": r["exchange"], "instrument_type": "equity",
+                            "direction": "long", "entry_date": TODAY, "entry_price": r["close"],
+                            "shares": add_shares, "currency": r["currency"], "status": "open",
+                        }])
+                    added.append({"ticker": r["ticker"], "add_shares": add_shares, "add_price": r["close"]})
             else:
                 held.append({"ticker": r["ticker"], "signal": sig})
 
-        return {"exited": exited, "trimmed": trimmed, "held": held, "total_eur": round(total_eur, 2)}
+        return {"exited": exited, "trimmed": trimmed, "added": added, "held": held, "total_eur": round(total_eur, 2)}
     finally:
         client.close()
 
@@ -175,6 +204,7 @@ if __name__ == "__main__":
     print(f"\nMechanical signals applied — portfolio total: EUR {result['total_eur']:,.2f}")
     print(f"  Exited: {result['exited']}")
     print(f"  Trimmed: {result['trimmed']}")
+    print(f"  Added: {result['added']}")
     print(f"  Held/Watch: {result['held']}")
     if args.dry_run:
         print("\n(dry run, nothing written)")

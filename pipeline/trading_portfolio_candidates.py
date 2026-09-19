@@ -40,15 +40,22 @@ own ask that the reason for the ranking be visible, not just the number.
 
 Phase 3 spec §3.1 point 2 — a ticker with an active 'rejected'
 briefing-recommendation signal (status_updated_at within the last
-REJECT_SUPPRESS_DAYS) is excluded from candidates entirely, so the same
-idea Mike already passed on doesn't silently resurface as if new (the
-exact MO/APA/BBY-reappearing problem the spec's own evidence documented).
-Does not implement the spec's "unless conviction rises" escape hatch —
-no normalized, comparable conviction score exists to test that against
-(the /5 score changes with fresh RSI/MACD daily regardless of any real
-change in view), so a straightforward time-based suppression is what's
-actually correctly buildable here; revisit if that turns out too blunt
-once Mike has used the Reject queue for a while.
+REJECT_SUPPRESS_DAYS) is excluded from candidates, so the same idea Mike
+already passed on doesn't silently resurface as if new (the exact
+MO/APA/BBY-reappearing problem the spec's own evidence documented) —
+UNLESS conviction has genuinely risen since the rejection (2026-09-19
+update, Mike's explicit request). "Conviction" is measured as
+signal_count (independent corroborating sources), snapshotted into
+`detail.rejected_signal_count` at the moment of rejection by the
+dashboard's reject handler (app/api/finance/pending-ideas/[id]/route.ts)
+— a real, comparable number, unlike the /5 score (which reshuffles with
+fresh RSI/MACD daily regardless of any real change in view, so it was
+correctly ruled out as a comparison basis in the first version of this
+file). If today's signal_count for that ticker exceeds what was stored
+at rejection time, the suppression lifts early — a real corroborating
+signal (a new llm-research hit, a wiki-mention, eventually morningstar-*/
+investor:*) landing after the rejection is exactly the kind of "conviction
+rose" event the spec had in mind.
 
 Run standalone: python trading_portfolio_candidates.py [--limit N]
 """
@@ -62,13 +69,26 @@ import db
 REJECT_SUPPRESS_DAYS = 14
 
 
-def _recently_rejected_tickers(client) -> set[tuple[str, str]]:
+def _recently_rejected_tickers(client) -> dict[tuple[str, str], int]:
+    """Returns {(ticker, exchange): signal_count at the time of rejection}
+    for every still-suppressed rejection. A row with no stored
+    rejected_signal_count (e.g. rejected before this escape hatch existed)
+    defaults to a high number so it keeps suppressing rather than
+    accidentally reopening on a NULL comparison.
+    """
     rows = db.query(client, """
-        SELECT ticker, exchange FROM signals
+        SELECT ticker, exchange, detail FROM signals
         WHERE source = 'briefing-recommendation' AND status = 'rejected'
           AND status_updated_at >= datetime('now', ?);
     """, [f"-{REJECT_SUPPRESS_DAYS} days"])
-    return {(r["ticker"], r["exchange"]) for r in rows}
+    out = {}
+    for r in rows:
+        try:
+            detail = json.loads(r["detail"] or "{}")
+        except json.JSONDecodeError:
+            detail = {}
+        out[(r["ticker"], r["exchange"])] = detail.get("rejected_signal_count", 999)
+    return out
 
 
 def get_candidates(limit: int = 10) -> list[dict]:
@@ -100,8 +120,10 @@ def get_candidates(limit: int = 10) -> list[dict]:
 
     scored = []
     for r in rows:
-        if (r["ticker"], r["exchange"]) in rejected:
-            continue
+        signal_count = r["signal_count"] or 1
+        rejected_at_count = rejected.get((r["ticker"], r["exchange"]))
+        if rejected_at_count is not None and signal_count <= rejected_at_count:
+            continue  # still suppressed — conviction hasn't risen since the rejection
 
         score = 0
         if r["passes_thresholds"]:
@@ -115,7 +137,6 @@ def get_candidates(limit: int = 10) -> list[dict]:
         if r["macd_signal"] == "Bullish":
             score += 1
 
-        signal_count = r["signal_count"] or 1
         other_signals = [s for s in (r["corroborating_signals"] or "").split(",") if s and s != "magic-formula-pass"]
 
         parts = []
