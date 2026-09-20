@@ -18,12 +18,9 @@ backfill_investor() when Mike names who to add next.
 from __future__ import annotations
 
 import re
-from datetime import date
 
 import equibles as _equibles
 import db
-
-TODAY = date.today().isoformat()
 
 
 def list_super_investors() -> list[dict]:
@@ -86,7 +83,8 @@ def fetch_institution_portfolio(institution_name: str) -> list[dict]:
     return rows
 
 
-def backfill_investor(investor_id: str, name: str, institution_name: str, source_ref: str, dry_run: bool = False) -> int:
+def backfill_investor(investor_id: str, name: str, institution_name: str, source_ref: str,
+                       as_of_date: str, dry_run: bool = False) -> int:
     """Write one tracked_investors row (source_type='13F') and one
     investor_positions row per current holding, sourced from Equibles.
     Returns the number of position rows written (0 on failure).
@@ -94,6 +92,18 @@ def backfill_investor(investor_id: str, name: str, institution_name: str, source
     direction: 'short' for Put rows (bearish thesis), 'long' for everything
     else (Common/Call/Principal) — matches the trades.direction convention
     used elsewhere in the schema.
+
+    `as_of_date` must be the 13F's own quarter-end date (list_super_investors()'s
+    `as_of` field, e.g. "2026-06-30" — strip any trailing " (stale)" flag
+    first) and is stored as disclosed_date, NOT today's date. A real bug
+    caught 2026-09-20 backfilling Buffett/Ackman: with disclosed_date=TODAY,
+    shadow_portfolio.py's entry_price_hint=None fallback tries to fetch a
+    historical close for [today, today+7d] — a future window with no data —
+    so every single position silently got skipped and 0 shadow trades were
+    generated. Equibles' 13F holdings table gives current share count/value,
+    not a per-share cost basis, so entry_price_hint has to stay None and rely
+    on that historical-close fallback resolving against the REAL disclosure
+    date instead.
     """
     holdings = fetch_institution_portfolio(institution_name)
     if not holdings:
@@ -109,7 +119,7 @@ def backfill_investor(investor_id: str, name: str, institution_name: str, source
         position_rows.append({
             "investor_id": investor_id, "ticker": h["ticker"], "exchange": "US",
             "direction": "short" if h["type"] == "Put" else "long",
-            "disclosed_date": TODAY, "entry_price_hint": None,
+            "disclosed_date": as_of_date, "entry_price_hint": None,
             "status": "open", "source_ref": source_ref,
         })
 

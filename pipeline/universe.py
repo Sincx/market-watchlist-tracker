@@ -382,6 +382,22 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     ("RIGL", "US", "RIGL", "USD"),    # Rigel Pharmaceuticals
     ("TNET", "US", "TNET", "USD"),    # TriNet Group
     ("NVO", "US", "NVO", "USD"),      # Novo Nordisk ADR
+    # Added 2026-09-20 — Master spec Phase 15: Buffett/Berkshire and Ackman/
+    # Pershing Square added as tracked investors (investors.py backfill_investor()),
+    # generating shadow portfolios via shadow_portfolio.py. Registering their
+    # 13F holdings here too so the shadow portfolios' Curr Price columns don't
+    # hit the same "never tracked" gap found earlier today on Paper Trading —
+    # merge() only fills blanks, so this is a no-op for tickers already
+    # covered by an index source (most of these are S&P 500/NASDAQ names).
+    ("ALLY", "US", "ALLY", "USD"), ("CB", "US", "CB", "USD"),
+    ("DAL", "US", "DAL", "USD"), ("DVA", "US", "DVA", "USD"),
+    ("KHC", "US", "KHC", "USD"), ("KR", "US", "KR", "USD"),
+    ("LEN", "US", "LEN", "USD"), ("LLYVK", "US", "LLYVK", "USD"),
+    ("MCO", "US", "MCO", "USD"), ("NYT", "US", "NYT", "USD"),
+    ("OXY", "US", "OXY", "USD"), ("SIRI", "US", "SIRI", "USD"),
+    ("VRSN", "US", "VRSN", "USD"), ("BN", "US", "BN", "USD"),
+    ("HHH", "US", "HHH", "USD"), ("HTZ", "US", "HTZ", "USD"),
+    ("QSR", "US", "QSR", "USD"), ("SEG", "US", "SEG", "USD"),
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
