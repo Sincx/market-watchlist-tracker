@@ -363,6 +363,25 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     # Semiconductors UCITS ETF; used the Paris listing to match this trade's
     # existing exchange='EU' tag and EUR currency.
     ("CHIP", "EU", "CHIP.PA", "EUR"),  # Amundi MSCI Semiconductors UCITS ETF, Euronext Paris listing
+    # Added 2026-09-20 — Mike reported the Paper Trading Portfolio (P1) not
+    # updating; root cause was these 9 open positions (out of ~35) having
+    # ZERO price history ever, silently excluded from open_value/net_pnl by
+    # the dashboard's own null-close guards (not a calc bug — see
+    # fred-dashboard/app/api/portfolios/route.ts's fetchPortfolio()). None
+    # of these are S&P 500/NASDAQ 100 constituents; the "Paper Trader"
+    # scheduled task (separate from this pipeline) can pick any US-listed
+    # ticker for a new daily pick, with no step that registers a new pick
+    # into this pipeline's tracked universe — this is a one-time catchup,
+    # not a fix to that gap itself (flagged separately to Mike).
+    ("SAP", "US", "SAP", "USD"),      # SAP SE's NYSE ADR — distinct from the EU/Xetra SAP row above
+    ("EVTC", "US", "EVTC", "USD"),    # Evertec
+    ("ICFI", "US", "ICFI", "USD"),    # ICF International
+    ("RDW", "US", "RDW", "USD"),      # Redwire
+    ("ISTR", "US", "ISTR", "USD"),    # Investar Holding
+    ("CMCL", "US", "CMCL", "USD"),    # Caledonia Mining
+    ("RIGL", "US", "RIGL", "USD"),    # Rigel Pharmaceuticals
+    ("TNET", "US", "TNET", "USD"),    # TriNet Group
+    ("NVO", "US", "NVO", "USD"),      # Novo Nordisk ADR
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
