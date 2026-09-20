@@ -75,6 +75,21 @@ POSITIONS = [
     ("FMCC", "US", "long", "2026-08-07", 5.43, "open", "Freddie Mac, GSE reform thesis"),
 ]
 
+# exit_date for every status='closed' row above — kept as a separate map
+# rather than widening the POSITIONS tuple, so the existing 26 rows don't
+# all need editing for two closed positions. exit_price is deliberately
+# NOT tracked here: the source (2026-08-13 trading post) only says "covered
+# for a gain"/"decent gain" with no number for either TSLA or AMAT, so per
+# the same "don't fabricate" rule as entry_price_hint, exit_price_hint
+# stays NULL and shadow_portfolio.py resolves it via a historical close on
+# exit_date instead (added 2026-09-20, mirroring the existing entry-side
+# fallback — found this pair had NULL exit_price entirely, contributing
+# $0 to Burry shadow's realized P&L until now).
+EXIT_DATES = {
+    "TSLA": "2026-08-13",  # source-burry-trading-post-2026-08-13: "Covered TSLA short ... (for gains)"
+    "AMAT": "2026-08-13",  # same post: "Covered ... AMAT short (both for gains)"
+}
+
 
 def run(dry_run: bool = False) -> None:
     investor_row = {
@@ -85,6 +100,8 @@ def run(dry_run: bool = False) -> None:
         "investor_id": INVESTOR_ID, "ticker": t, "exchange": ex, "direction": d,
         "disclosed_date": date, "entry_price_hint": price, "status": status,
         "source_ref": SOURCE_REF,
+        "exit_date": EXIT_DATES.get(t) if status == "closed" else None,
+        "exit_price_hint": None,
     } for (t, ex, d, date, price, status, _note) in POSITIONS]
 
     print(f"tracked_investors: 1 row (burry)")

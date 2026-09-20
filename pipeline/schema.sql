@@ -208,6 +208,12 @@ CREATE TABLE investor_positions (
     disclosed_date TEXT, entry_price_hint REAL,
     status TEXT,              -- 'open' | 'trimmed' | 'closed'
     source_ref TEXT,          -- wiki page / trading-post citation
+    exit_date TEXT,           -- NULL unless status='closed'. Added via live ALTER TABLE 2026-09-20.
+    exit_price_hint REAL,     -- source-disclosed exit price, same "don't fabricate" rule as
+                              -- entry_price_hint — NULL when the source only says "closed for a
+                              -- gain" with no number, which shadow_portfolio.py then resolves via
+                              -- a historical-close lookup on exit_date, same as it already does
+                              -- for entry_price_hint=None. Added via live ALTER TABLE 2026-09-20.
     PRIMARY KEY (investor_id, ticker, exchange, disclosed_date)
 );
 

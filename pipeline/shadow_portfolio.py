@@ -68,13 +68,27 @@ def generate_shadow_trades(investor_id: str = "burry") -> tuple[dict, list[dict]
 
     trade_rows = []
     for p in positions:
+        yahoo_ticker = YAHOO_TICKER_MAP.get(p["ticker"], p["ticker"])
         entry_price = p["entry_price_hint"]
         if entry_price is None:
-            yahoo_ticker = YAHOO_TICKER_MAP.get(p["ticker"], p["ticker"])
             entry_price = _historical_close(yahoo_ticker, p["disclosed_date"])
             if entry_price is None:
                 print(f"  [shadow] {p['ticker']}: no price hint AND no historical close found — skipping, can't size a trade with no price")
                 continue
+
+        is_closed = p["status"] == "closed"
+        # Same "don't fabricate" fallback as entry_price above, applied to
+        # the exit leg — added 2026-09-20 after finding Burry's own TSLA/AMAT
+        # closed rows had NULL exit_price/exit_date entirely (not just a
+        # missing hint), so they contributed $0 to realized P&L despite the
+        # source explicitly saying both were covered "for a gain."
+        exit_price = None
+        if is_closed:
+            exit_price = p.get("exit_price_hint")
+            if exit_price is None and p.get("exit_date"):
+                exit_price = _historical_close(yahoo_ticker, p["exit_date"])
+            if exit_price is None:
+                print(f"  [shadow] {p['ticker']}: status=closed but no exit price/date resolvable — trade will carry no exit_price")
 
         trade_rows.append({
             "trade_id": f"{portfolio_id}-{p['ticker']}-{p['disclosed_date']}",
@@ -82,7 +96,9 @@ def generate_shadow_trades(investor_id: str = "burry") -> tuple[dict, list[dict]
             "ticker": p["ticker"], "exchange": p["exchange"], "instrument_type": "equity",
             "direction": p["direction"], "entry_date": p["disclosed_date"], "entry_price": entry_price,
             "shares": round(SIZE_PER_POSITION_USD / entry_price, 6), "currency": "USD",
-            "status": "closed" if p["status"] == "closed" else "open",
+            "status": "closed" if is_closed else "open",
+            "exit_date": p.get("exit_date") if is_closed else None,
+            "exit_price": exit_price,
             "thesis": f"Mirrors {investor[0]['name']}'s disclosed {p['direction']} position (source: {p['source_ref']})",
             "source_signal_id": None,
         })
