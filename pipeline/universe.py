@@ -398,6 +398,18 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     ("VRSN", "US", "VRSN", "USD"), ("BN", "US", "BN", "USD"),
     ("HHH", "US", "HHH", "USD"), ("HTZ", "US", "HTZ", "USD"),
     ("QSR", "US", "QSR", "USD"), ("SEG", "US", "SEG", "USD"),
+    # Found by check_untracked_instruments.py (new 2026-09-20) — closed
+    # Paper Trading (P1) positions with no universe coverage, and Burry
+    # shadow's 3 international holdings, which shadow_portfolio.py already
+    # has a correct YAHOO_TICKER_MAP for (used only for their one-time
+    # historical entry price) but which were never registered for ONGOING
+    # daily price updates, so their Curr Price has always shown blank.
+    ("RELX", "US", "RELX", "USD"), ("AIP", "US", "AIP", "USD"),
+    ("SKYT", "US", "SKYT", "USD"), ("PENG", "US", "PENG", "USD"),
+    ("RIVN", "US", "RIVN", "USD"),
+    ("0700", "HK", "0700.HK", "HKD"),  # Tencent — Burry shadow long
+    ("3690", "HK", "3690.HK", "HKD"),  # Meituan — Burry shadow long
+    ("TPW", "AU", "TPW.AX", "AUD"),    # Temple & Webster — Burry shadow long
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
