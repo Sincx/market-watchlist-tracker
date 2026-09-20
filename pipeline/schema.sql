@@ -344,3 +344,22 @@ WHERE s.rowid = (
     ORDER BY s2.flagged_date DESC, s2.rowid DESC
     LIMIT 1
 );
+
+-- Master spec Phase 15 — which tracked investor(s) currently hold each
+-- ticker, for the screener's own "Investors" column. Kept separate from
+-- v_latest_signal on purpose: that view only surfaces ONE signal per
+-- ticker (most recent by flagged_date), so an investor holding can get
+-- silently crowded out by a newer magic-formula-pass/llm-research signal
+-- on the same ticker. Only 'open' positions count — a closed position
+-- isn't a current holding. GROUP_CONCAT ordering isn't guaranteed by
+-- SQLite, so this is for display only, not for anything that needs a
+-- stable/sorted order.
+CREATE VIEW v_ticker_investor_positions AS
+SELECT ip.ticker, ip.exchange,
+       GROUP_CONCAT(DISTINCT ip.investor_id) AS investor_ids,
+       GROUP_CONCAT(DISTINCT ti.name) AS investor_names,
+       COUNT(DISTINCT ip.investor_id) AS investor_count
+FROM investor_positions ip
+JOIN tracked_investors ti ON ti.investor_id = ip.investor_id
+WHERE ip.status = 'open'
+GROUP BY ip.ticker, ip.exchange;
