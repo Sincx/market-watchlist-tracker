@@ -47,6 +47,11 @@ _STEP_META = {
         description="Weekly — quarterly ETF returns/P-E for style+sector groups via etf_returns.py",
         entry_point="run_pipeline.py --step etf",
     ),
+    "investors": dict(
+        task_id="investor-refresh", kind="monthly", schedule_cron="0 8 5 * *",
+        description="Monthly — re-syncs 13F-tracked investors (Buffett, Ackman) via investor_refresh.py",
+        entry_point="run_pipeline.py --step investors",
+    ),
 }
 
 
@@ -89,11 +94,26 @@ def _run_etf(dry_run: bool) -> str:
     return f"success: style={counts['style']}, sector={counts['sector']}"
 
 
+def _summarize_investor_result(r: dict) -> str:
+    if "error" in r:
+        return f"{r['investor_id']}=err"
+    if "note" in r:
+        return f"{r['investor_id']}={r['note']}"
+    return f"{r['investor_id']}=+{r['new']}/-{r['closed']}"
+
+
+def _run_investors(dry_run: bool) -> str:
+    from investor_refresh import refresh_all
+    results = refresh_all(dry_run=dry_run)
+    return "success: " + ", ".join(_summarize_investor_result(r) for r in results)
+
+
 _RUNNERS = {
     "fundamentals": lambda a: _run_fundamentals(a.dry_run, a.limit, a.exchange),
     "screen": lambda a: _run_screen(a.dry_run),
     "options": lambda a: _run_options(a.dry_run),
     "etf": lambda a: _run_etf(a.dry_run),
+    "investors": lambda a: _run_investors(a.dry_run),
 }
 
 
