@@ -410,6 +410,10 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     ("0700", "HK", "0700.HK", "HKD"),  # Tencent — Burry shadow long
     ("3690", "HK", "3690.HK", "HKD"),  # Meituan — Burry shadow long
     ("TPW", "AU", "TPW.AX", "AUD"),    # Temple & Webster — Burry shadow long
+    # Added 2026-09-21 — Trading Portfolio buys, caught same-day by
+    # check_untracked_instruments.py.
+    ("ERO", "US", "ERO", "USD"),       # Ero Copper Corp
+    ("QXO-PB", "US", "QXO-PB", "USD"),  # QXO Inc, Series B preferred
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
