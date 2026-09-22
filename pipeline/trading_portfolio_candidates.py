@@ -57,6 +57,21 @@ signal (a new llm-research hit, a wiki-mention, eventually morningstar-*/
 investor:*) landing after the rejection is exactly the kind of "conviction
 rose" event the spec had in mind.
 
+Found 2026-09-22 (Mike's own review, prompted by KLR reappearing as a
+screener "Buy"): this file had NO filter at all for tickers already held
+in the Trading Portfolio — only recently-rejected tickers were excluded.
+Relying on the briefing's own LLM judgment to notice "already held" every
+single run is exactly the failure mode the rejected-ticker suppression
+below was built to avoid for rejections; it just hadn't been applied to
+the much more basic "do we already own this" case. KLR is a sharper
+version of the problem: it's fully free-ridden (all remaining shares at
+zero effective cost), so a "new position" recommendation here wouldn't
+just be redundant — buying back in would reintroduce real capital at risk
+on a position that was deliberately reduced to zero cost basis. Existing
+holdings with a bullish setup are already covered by Step 3's separate
+"Add" signal (trading_portfolio_turso_view.py) — a new-position candidate
+should never include something already owned in the first place.
+
 Run standalone: python trading_portfolio_candidates.py [--limit N]
 """
 from __future__ import annotations
@@ -67,6 +82,15 @@ import json
 import db
 
 REJECT_SUPPRESS_DAYS = 14
+PORTFOLIO_ID = "trading-portfolio"
+
+
+def _currently_held_tickers(client) -> set[tuple[str, str]]:
+    rows = db.query(client, """
+        SELECT DISTINCT ticker, exchange FROM trades
+        WHERE portfolio_id = :p AND status = 'open';
+    """, {"p": PORTFOLIO_ID})
+    return {(r["ticker"], r["exchange"]) for r in rows}
 
 
 def _recently_rejected_tickers(client) -> dict[tuple[str, str], int]:
@@ -115,11 +139,15 @@ def get_candidates(limit: int = 10) -> list[dict]:
             WHERE u.active = 1 AND p.technical_rating LIKE 'Buy%';
         """)
         rejected = _recently_rejected_tickers(client)
+        held = _currently_held_tickers(client)
     finally:
         client.close()
 
     scored = []
     for r in rows:
+        if (r["ticker"], r["exchange"]) in held:
+            continue  # already an open Trading Portfolio position — see Step 3's Add signal instead
+
         signal_count = r["signal_count"] or 1
         rejected_at_count = rejected.get((r["ticker"], r["exchange"]))
         if rejected_at_count is not None and signal_count <= rejected_at_count:
