@@ -414,6 +414,12 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     # check_untracked_instruments.py.
     ("ERO", "US", "ERO", "USD"),       # Ero Copper Corp
     ("QXO-PB", "US", "QXO-PB", "USD"),  # QXO Inc, Series B preferred
+    # Added 2026-09-25 — found by check_untracked_instruments.py: Paper
+    # Trading (P1) holds WISE (UK) with no universe coverage. Verified live
+    # via yfinance — WISE.L resolves to "Wise Group plc" (the fintech
+    # formerly TransferWise) on the LSE, matching FTSE-listing convention
+    # elsewhere in this file (exchange="UK", ".L" suffix, currency="GBX").
+    ("WISE", "UK", "WISE.L", "GBX"),   # Wise Group plc (formerly TransferWise), LSE
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
