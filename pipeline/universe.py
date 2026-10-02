@@ -420,6 +420,12 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     # formerly TransferWise) on the LSE, matching FTSE-listing convention
     # elsewhere in this file (exchange="UK", ".L" suffix, currency="GBX").
     ("WISE", "UK", "WISE.L", "GBX"),   # Wise Group plc (formerly TransferWise), LSE
+    # Added 2026-10-02 — found by check_untracked_instruments.py: Trading
+    # Portfolio's closed VSURE round-trip (04-16/04-20 buys, 05-04 exit) had
+    # no universe coverage. VSURE.AS/.PA/bare all 404 on Yahoo; VSURE.ST
+    # resolves to "Verisure plc" (Nasdaq Stockholm, quoted in EUR), and its
+    # April-May daily ranges contain the trade's €9.91/€10.63 fills.
+    ("VSURE", "EU", "VSURE.ST", "EUR"),  # Verisure plc, Nasdaq Stockholm (EUR-quoted)
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
