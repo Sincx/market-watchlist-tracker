@@ -16,6 +16,20 @@ Two responsibilities, both pure Python, no LLM cost:
    runs regardless of whether Mike ever approves/rejects that idea for
    the REAL book — the two portfolios are meant to diverge.
 
+   **Ticker-level dedup (added 2026-10-05, real incident):** the
+   source_signal_id match above is idempotent per SIGNAL, not per ticker —
+   record_briefing_recommendation.py used to write a new signal_id every
+   day an idea was carried forward, so this function opened a brand new
+   position every single day too. Found live: IAG had 8 separate open
+   positions from one idea restated daily for two weeks, massively
+   overweighting it in this book vs. every other ticker. Fixed in
+   record_briefing_recommendation.py (it now skips re-writing while a
+   ticker already has an active pending idea), but this function also
+   guards independently: it now skips seeding if the ticker already has
+   ANY open position in this portfolio, regardless of which signal_id
+   that position came from — "track from the first day it was flagged,"
+   per Mike's own framing, not one lot per day.
+
 2. apply_mechanical_signals() — reuses trading_portfolio_turso_view.py's
    own _signal()/_to_eur() unchanged (the spec named portfolio_update.py
    for this reuse, which is stale as of 2026-09-14's Turso-master switch;
@@ -62,8 +76,16 @@ def seed_new_recommendations(fx: dict, dry_run: bool = False) -> list[dict]:
                   WHERE portfolio_id = :pid AND source_signal_id IS NOT NULL
               );
         """, {"pid": PORTFOLIO_ID})
+        already_held = db.query(client, """
+            SELECT DISTINCT ticker, exchange FROM trades
+            WHERE portfolio_id = :pid AND status = 'open';
+        """, {"pid": PORTFOLIO_ID})
+        held_set = {(r["ticker"], r["exchange"]) for r in already_held}
+
         written = []
         for s in signals:
+            if (s["ticker"], s["exchange"]) in held_set:
+                continue  # already tracking this ticker from an earlier flagged day
             try:
                 detail = json.loads(s["detail"] or "{}")
             except json.JSONDecodeError:

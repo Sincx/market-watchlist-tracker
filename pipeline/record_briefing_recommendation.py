@@ -11,6 +11,22 @@ the ones actually written up as opportunities). Idempotent per (ticker,
 exchange, flagged_date): re-running for the same ticker on the same day
 replaces that day's row rather than creating a duplicate.
 
+**Cross-day dedup (added 2026-10-05, real incident):** signal_id includes
+TODAY's date, so a ticker that keeps scoring well and gets carried forward
+on consecutive days used to get a brand-new signals row — and therefore a
+brand-new recommended-trades position via recommended_trades_sync.py's
+seed_new_recommendations() — every single day, with no cap. Found live:
+IAG had 8 separate open recommended-trades positions and 5 duplicate
+Pending Trade Idea cards, all from one idea restated daily for two weeks.
+Fixed by skipping the write entirely when the ticker already has an
+active (status='new' or 'snoozed') briefing-recommendation signal — the
+ORIGINAL pending idea is retained as-is, not refreshed with today's
+price/conviction text, so Mike sees one card per idea, not one per day
+it keeps looking good. Does not revive an already-expired/rejected idea;
+those are allowed to generate a fresh signal (rejection's own
+conviction-rises escape hatch in trading_portfolio_candidates.py still
+governs whether a rejected ticker can resurface at all).
+
 Run standalone:
   python record_briefing_recommendation.py --ticker MO --exchange US \
     --entry 69.52 --stop 62.00 --size 1000 \
@@ -24,6 +40,21 @@ import json
 from datetime import date, datetime, timezone
 
 import db
+
+
+def _already_pending(client, ticker: str, exchange: str, signal_id: str) -> bool:
+    """True if a DIFFERENT day's signal for this ticker is still pending.
+    Excludes `signal_id` itself so a same-day re-run (the original
+    idempotent-replace use case) still goes through — only a genuinely
+    new day's write gets suppressed.
+    """
+    rows = db.query(client, """
+        SELECT 1 FROM signals
+        WHERE source = 'briefing-recommendation' AND ticker = :t AND exchange = :e
+          AND status IN ('new', 'snoozed') AND signal_id != :sid
+        LIMIT 1;
+    """, {"t": ticker, "e": exchange, "sid": signal_id})
+    return bool(rows)
 
 
 def record(ticker: str, exchange: str, entry: float, stop: float, size: float,
@@ -41,6 +72,8 @@ def record(ticker: str, exchange: str, entry: float, stop: float, size: float,
         return {"would_write": row}
     client = db.get_client()
     try:
+        if _already_pending(client, ticker, exchange, signal_id):
+            return {"skipped": "already an active pending idea for this ticker", "ticker": ticker, "exchange": exchange}
         db.upsert(client, "signals", [row])
     finally:
         client.close()
