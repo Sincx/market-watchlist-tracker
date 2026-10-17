@@ -183,7 +183,7 @@ def fetch_fx_rates() -> dict:
     """
     Returns dict of {currency: usd_rate}.
     GBX (pence) = GBP/100.
-    Fetches: GBPUSD, EURUSD, CHFUSD, DKKUSD, SEKUSD from Polygon forex.
+    Fetches: GBPUSD, EURUSD, CHFUSD, DKKUSD, SEKUSD, NOKUSD, PLNUSD from Polygon forex.
     """
     pairs = {
         "GBP": "C:GBPUSD",
@@ -191,6 +191,8 @@ def fetch_fx_rates() -> dict:
         "CHF": "C:CHFUSD",
         "DKK": "C:DKKUSD",
         "SEK": "C:SEKUSD",
+        "NOK": "C:NOKUSD",
+        "PLN": "C:PLNUSD",
     }
     rates = {"USD": 1.0}
     for ccy, pair in pairs.items():

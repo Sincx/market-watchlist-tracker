@@ -55,6 +55,18 @@ COUNTRY_TO_YAHOO_SUFFIX = {
     "United Kingdom": "L",
 }
 
+# Country -> native quote currency on its home exchange. STOXX 600 rows used
+# to be written with currency=None, which technicals.py defaults to "USD" —
+# so every EU close (EUR/CHF/SEK/... native) was stored labelled USD with
+# usd_rate=1.0 (found 2026-10-05: ~350 continental tickers affected).
+COUNTRY_TO_CURRENCY = {
+    "France": "EUR", "Germany": "EUR", "Netherlands": "EUR", "Spain": "EUR",
+    "Italy": "EUR", "Belgium": "EUR", "Finland": "EUR", "Ireland": "EUR",
+    "Austria": "EUR", "Portugal": "EUR", "Luxembourg": "EUR",
+    "Switzerland": "CHF", "Sweden": "SEK", "Denmark": "DKK", "Norway": "NOK",
+    "Poland": "PLN", "United Kingdom": "GBX",
+}
+
 # Country -> stockanalysis.com's URL exchange-prefix segment (quote/<prefix>/<ticker>),
 # for fundamentals.py's fetch_eu(). Entries were carried over from config.py's
 # existing Morningstar-EU sa_prefix_map on the assumption it had been verified —
@@ -202,10 +214,15 @@ def fetch_stoxx600() -> list[dict]:
             continue
         ticker = _normalize_ticker(raw_ticker)
         suffix = COUNTRY_TO_YAHOO_SUFFIX.get(country)
+        # UK constituents are LSE listings — key them exchange='UK' so merge()
+        # folds them into the FTSE 350 row (adding STOXX600 membership) rather
+        # than creating a second exchange='EU' row for the same .L security
+        # (found 2026-10-05: 99 such duplicates, priced GBX but labelled USD).
+        exchange = "UK" if country == "United Kingdom" else "EU"
         rows.append({
-            "ticker": ticker, "exchange": "EU", "index_membership": "STOXX600",
+            "ticker": ticker, "exchange": exchange, "index_membership": "STOXX600",
             "yahoo_ticker": f"{ticker}.{suffix}" if suffix else None,
-            "currency": None,
+            "currency": COUNTRY_TO_CURRENCY.get(country),
             "sa_prefix": COUNTRY_TO_SA_PREFIX.get(country),
             "sector": str(r[sector_col]) if sector_col else "",
             "added_date": TODAY, "active": 1, "asset_class": "equity",

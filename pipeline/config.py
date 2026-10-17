@@ -105,6 +105,7 @@ TICKER_DISPLAY_INDEX = {
     "ALV":    "DAX",
     "MC":     "CAC 40",
     "ABI":    "BEL 20",
+    "STR":    "ATX",  # Strabag — Vienna-listed; Sep 2026 eurozone dividend-performer screen
     # Morningstar-US — non-S&P 500 or on NASDAQ
     "TEAM":   "NASDAQ 100",  # Atlassian listed on NASDAQ
     "CMCSA":  "NASDAQ 100",  # Comcast on NASDAQ
@@ -235,7 +236,7 @@ GROUPS = {
         "pct_format": "NUMBER",
         "tickers": [
             "NWG", "EDEN", "SAP", "ADYEN", "COLO-B", "PRX", "EKTA-B",
-            "GIVN", "AKZA", "KYGA", "FCT", "ALV", "MC", "ABI",
+            "GIVN", "AKZA", "KYGA", "FCT", "ALV", "MC", "ABI", "STR",
         ],
         # Yahoo Finance ticker symbols for yfinance
         "yahoo_map": {
@@ -243,14 +244,14 @@ GROUPS = {
             "ADYEN": "ADYEN.AS", "COLO-B": "COLO-B.CO", "PRX": "PRX.AS",
             "EKTA-B": "EKTA-B.ST", "GIVN": "GIVN.SW", "AKZA": "AKZA.AS",
             "KYGA": "KRZ.IR", "FCT": "FCT.MI", "ALV": "ALV.DE",
-            "MC": "MC.PA", "ABI": "ABI.BR",
+            "MC": "MC.PA", "ABI": "ABI.BR", "STR": "STR.VI",
         },
         # Native trading currency per ticker
         "currency_map": {
             "NWG": "GBX",
             "EDEN": "EUR", "SAP": "EUR", "ADYEN": "EUR", "PRX": "EUR",
             "AKZA": "EUR", "KYGA": "EUR", "FCT": "EUR", "ALV": "EUR",
-            "MC": "EUR", "ABI": "EUR",
+            "MC": "EUR", "ABI": "EUR", "STR": "EUR",
             "COLO-B": "DKK",
             "EKTA-B": "SEK",
             "GIVN": "CHF",
@@ -260,11 +261,11 @@ GROUPS = {
             "NWG": "lon", "EDEN": "epa", "SAP": "etr", "ADYEN": "ams",
             "COLO-B": "cse", "PRX": "ams", "EKTA-B": "sto", "GIVN": "swx",
             "AKZA": "ams", "KYGA": "ise", "FCT": "bit", "ALV": "etr",
-            "MC": "epa", "ABI": "ebr",
+            "MC": "epa", "ABI": "ebr", "STR": "vie",
         },
     },
     "Morningstar-US": {
-        "start_row": 116,
+        "start_row": 117,  # shifted +1 for Morningstar-EU's new STR row (Sep 2026 eurozone screen)
         "exchange": "US",
         "currency": "USD",
         "pct_format": "NUMBER",
@@ -294,7 +295,7 @@ GROUPS = {
     # Closed: AMAT (short disclosed Aug 4, covered Aug 13).
     # ETF shorts (not tracked as individual rows): SOXX, QQQ.
     "Burry": {
-        "start_row": 177,   # shifted down to make room for 10 new Morningstar-US stocks (Sep 2026 screens)
+        "start_row": 178,   # shifted +1 again for Morningstar-EU's new STR row (Sep 2026 eurozone screen)
         "exchange": "US",
         "currency": "USD",
         "pct_format": "NUMBER",
