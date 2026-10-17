@@ -24,13 +24,16 @@ import argparse
 import db
 from fetchers import fetch_yfinance
 
-# Same currency set fetch_fx_rates() already covers.
-CURRENCIES = ["GBP", "EUR", "CHF", "DKK", "SEK"]
+# Same currency set fetch_fx_rates() already covers. NOK/PLN added 2026-10-17
+# with universe.py's COUNTRY_TO_CURRENCY fix — technicals.py only started
+# writing them to fx_rates on 2026-10-06, but prices history goes back to
+# 2026-09-10, so price_currency_backfill.py needs them for the gap.
+CURRENCIES = ["GBP", "EUR", "CHF", "DKK", "SEK", "NOK", "PLN"]
 
 
-def backfill(days: int = 100, dry_run: bool = False) -> None:
+def backfill(days: int = 100, dry_run: bool = False, only: list[str] | None = None) -> None:
     rows = []
-    for ccy in CURRENCIES:
+    for ccy in (only or CURRENCIES):
         bars = fetch_yfinance(f"{ccy}USD=X", days=days)
         print(f"{ccy}USD=X: {len(bars)} daily bars")
         for b in bars:
@@ -61,5 +64,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--days", type=int, default=100, help="How many trading days of history to fetch (default 100, covers back to ~early July)")
+    parser.add_argument("--only", default=None, help="Comma-separated currencies to (re)fetch, e.g. NOK,PLN — leaves the rest of fx_rates untouched")
     args = parser.parse_args()
-    backfill(days=args.days, dry_run=args.dry_run)
+    backfill(days=args.days, dry_run=args.dry_run, only=args.only.split(",") if args.only else None)
