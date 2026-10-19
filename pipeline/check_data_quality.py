@@ -33,8 +33,20 @@ def check(attempt_retry: bool = True) -> dict:
             SELECT ticker, exchange, data_type, status, error_message, consecutive_failures
             FROM data_quality WHERE status != 'ok';
         """)
+        # Skip rows for tickers universe.py has since DEACTIVATED (found
+        # 2026-10-19: 48 of 264 failing rows were the old EU-keyed duplicates
+        # of UK securities, retried one live API call at a time every run for
+        # nothing). Deliberately "explicitly inactive", NOT "must be active in
+        # universe": data_quality also holds ETF (etf_returns) and option-
+        # underlying rows that may have no universe row at all, and those must
+        # keep being checked.
+        inactive = {
+            (r["ticker"], r["exchange"])
+            for r in db.query(client, "SELECT ticker, exchange FROM universe WHERE active = 0;")
+        }
     finally:
         client.close()
+    rows = [r for r in rows if (r["ticker"], r["exchange"]) not in inactive]
 
     recovered, still_failing, needs_review = [], [], []
     for r in rows:
