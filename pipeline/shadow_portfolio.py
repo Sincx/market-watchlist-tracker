@@ -119,6 +119,14 @@ def run(investor_id: str = "burry", dry_run: bool = False) -> None:
 
     client = db.get_client()
     try:
+        # created_date must be set once, on first creation — regenerating a
+        # shadow (investor_refresh.py does it whenever a position changes)
+        # used to re-stamp it with today's date every time, so Burry's read
+        # 2026-09-20 instead of 2026-09-10 and the dashboard's tab order (which
+        # sorts on it) meant nothing. Omitting the key leaves an existing row's
+        # value alone (db.upsert is column-preserving).
+        if db.query(client, "SELECT 1 FROM portfolios WHERE portfolio_id = :p;", {"p": portfolio_row["portfolio_id"]}):
+            portfolio_row = {k: v for k, v in portfolio_row.items() if k != "created_date"}
         db.upsert(client, "portfolios", [portfolio_row])
         n = db.upsert(client, "trades", trade_rows)
         print(f"Upserted 1 portfolio, {n} trades.")

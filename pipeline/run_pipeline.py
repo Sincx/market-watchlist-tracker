@@ -99,7 +99,8 @@ def _summarize_investor_result(r: dict) -> str:
         return f"{r['investor_id']}=err"
     if "note" in r:
         return f"{r['investor_id']}={r['note']}"
-    return f"{r['investor_id']}=+{r['new']}/-{r['closed']}"
+    trimmed = f"/~{r['trimmed']}" if r.get("trimmed") else ""
+    return f"{r['investor_id']}=+{r['new']}/-{r['closed']}{trimmed}"
 
 
 def _run_investors(dry_run: bool) -> str:

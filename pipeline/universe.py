@@ -280,6 +280,38 @@ def fetch_burry_flagged() -> list[dict]:
     return rows
 
 
+def fetch_tracked_investors() -> list[dict]:
+    """Master spec Phase 15 / §5 — every currently-held US position of an
+    active 13F-tracked investor (Buffett, Ackman, ...), straight from
+    `investor_positions`, so each gets a price and the universe's monthly
+    staleness sweep doesn't deactivate it. Same reasoning as
+    fetch_wiki_mentioned(): the table is the live source of truth, not a
+    second static list to keep in sync. investor_refresh.py also registers
+    newly-held tickers immediately, so there's no wait for this monthly pass.
+    13F filings only cover US-listed securities, hence exchange='US'/USD;
+    prose-sourced Burry is covered by fetch_burry_flagged()/config instead.
+    """
+    client = db.get_client()
+    try:
+        rows = db.query(client, """
+            SELECT DISTINCT ip.ticker FROM investor_positions ip
+            JOIN tracked_investors ti ON ti.investor_id = ip.investor_id
+            WHERE ti.source_type = '13F' AND ti.active = 1
+              AND ip.status IN ('open', 'trimmed') AND ip.exchange = 'US';
+        """)
+    finally:
+        client.close()
+    result = []
+    for r in rows:
+        ticker = _normalize_ticker(r["ticker"])
+        result.append({
+            "ticker": ticker, "exchange": "US", "index_membership": "INVESTOR_FLAGGED",
+            "yahoo_ticker": ticker, "currency": "USD",
+            "sector": "", "added_date": TODAY, "active": 1, "asset_class": "equity",
+        })
+    return result
+
+
 def fetch_wiki_mentioned() -> list[dict]:
     """Phase 2 (P2.2) — tickers auto-added by resolve_ticker.py from the
     weekly wiki-company-scanner task. Unlike fetch_burry_flagged() (which
@@ -565,6 +597,7 @@ def run(dry_run: bool = False) -> None:
         ("STOXX 600", fetch_stoxx600),
         ("curated groups", fetch_curated),
         ("Burry-flagged", fetch_burry_flagged),
+        ("tracked investors", fetch_tracked_investors),
         ("crypto", fetch_crypto),
         ("wiki-mentioned", fetch_wiki_mentioned),
         ("portfolio-specific", fetch_portfolio_specific),

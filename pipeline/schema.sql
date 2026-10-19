@@ -199,7 +199,13 @@ CREATE TABLE cash_ledger (
 CREATE TABLE tracked_investors (
     investor_id TEXT PRIMARY KEY, name TEXT,
     source_type TEXT,        -- '13F' | 'substack' | 'letter' | 'manual'
-    source_ref TEXT          -- wiki page(s) this is sourced from
+    source_ref TEXT,         -- wiki page(s) this is sourced from; 'cik:<n>' for 13F investors
+                             -- (investor_refresh.py maps that CIK to Equibles' firm name)
+    -- Added via live ALTER TABLE 2026-10-19 (Master spec Phase 15):
+    display_name TEXT,       -- surname for the UI, e.g. 'Buffett' — set explicitly, not parsed from name
+    active INTEGER DEFAULT 1,  -- 0 hides the investor's tab/column and stops investor_refresh.py
+    last_as_of TEXT          -- 13F: the as_of date of the last filing investor_refresh.py processed
+                             -- (NULL for non-13F investors); the "already up to date" check
 );
 
 CREATE TABLE investor_positions (
@@ -214,6 +220,9 @@ CREATE TABLE investor_positions (
                               -- gain" with no number, which shadow_portfolio.py then resolves via
                               -- a historical-close lookup on exit_date, same as it already does
                               -- for entry_price_hint=None. Added via live ALTER TABLE 2026-09-20.
+    shares REAL, value_usd REAL,  -- latest filing's share count / market value (13F investors only;
+                              -- NULL for prose-sourced Burry). `shares` is what trim detection
+                              -- compares filing-to-filing. Added via live ALTER TABLE 2026-10-19.
     PRIMARY KEY (investor_id, ticker, exchange, disclosed_date)
 );
 
@@ -345,21 +354,32 @@ WHERE s.rowid = (
     LIMIT 1
 );
 
--- Master spec Phase 15 — which tracked investor(s) currently hold each
--- ticker, for the screener's own "Investors" column. Kept separate from
--- v_latest_signal on purpose: that view only surfaces ONE signal per
--- ticker (most recent by flagged_date), so an investor holding can get
--- silently crowded out by a newer magic-formula-pass/llm-research signal
--- on the same ticker. Only 'open' positions count — a closed position
--- isn't a current holding. GROUP_CONCAT ordering isn't guaranteed by
--- SQLite, so this is for display only, not for anything that needs a
--- stable/sorted order.
+-- Master spec Phase 15 — one row per (ticker, exchange, investor) for every
+-- CURRENT holding: 'open', or 'trimmed' (share count fell more than
+-- investor_refresh.TRIM_THRESHOLD in the latest filing). Closed positions
+-- aren't holdings. Inactive investors are excluded.
 CREATE VIEW v_ticker_investor_positions AS
 SELECT ip.ticker, ip.exchange,
-       GROUP_CONCAT(DISTINCT ip.investor_id) AS investor_ids,
-       GROUP_CONCAT(DISTINCT ti.name) AS investor_names,
-       COUNT(DISTINCT ip.investor_id) AS investor_count
+       ti.investor_id, ti.name AS investor_full_name, ti.display_name,
+       ip.direction, ip.disclosed_date, ip.status
 FROM investor_positions ip
 JOIN tracked_investors ti ON ti.investor_id = ip.investor_id
-WHERE ip.status = 'open'
-GROUP BY ip.ticker, ip.exchange;
+WHERE ip.status IN ('open', 'trimmed') AND ti.active = 1;
+
+-- The same thing collapsed to ONE row per ticker for the Watchlist/Screener's
+-- Investors column, e.g. "Buffett (L); Ackman (L, trimmed); Burry (S)". Separate
+-- from v_ticker_investor_positions because joining that per-investor view
+-- straight into the screener query would multiply a ticker's row once per
+-- investor. ';' separates entries because the entries themselves contain
+-- commas. Order within the string isn't guaranteed (SQLite GROUP_CONCAT) —
+-- display only.
+CREATE VIEW v_ticker_investor_labels AS
+SELECT ticker, exchange,
+       GROUP_CONCAT(
+           COALESCE(display_name, investor_full_name) || ' ('
+           || CASE direction WHEN 'short' THEN 'S' ELSE 'L' END
+           || CASE status WHEN 'trimmed' THEN ', trimmed' ELSE '' END || ')',
+           ';') AS investor_labels,
+       COUNT(DISTINCT investor_id) AS investor_count
+FROM v_ticker_investor_positions
+GROUP BY ticker, exchange;

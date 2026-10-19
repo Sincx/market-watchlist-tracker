@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 
 import db
+import investors
 
 INVESTOR_ID = "burry"
 SOURCE_REF = "finance/michael-burry/trading-posts.md"
@@ -95,6 +96,7 @@ def run(dry_run: bool = False) -> None:
     investor_row = {
         "investor_id": INVESTOR_ID, "name": "Michael Burry",
         "source_type": "substack", "source_ref": "finance/michael-burry/",
+        "display_name": "Burry", "active": 1,
     }
     position_rows = [{
         "investor_id": INVESTOR_ID, "ticker": t, "exchange": ex, "direction": d,
@@ -121,7 +123,8 @@ def run(dry_run: bool = False) -> None:
     try:
         db.upsert(client, "tracked_investors", [investor_row])
         n = db.upsert(client, "investor_positions", position_rows)
-        print(f"Upserted 1 tracked_investors row, {n} investor_positions rows.")
+        sig = investors.ensure_investor_signals(client)
+        print(f"Upserted 1 tracked_investors row, {n} investor_positions rows, {sig} investor signals.")
     finally:
         client.close()
 
