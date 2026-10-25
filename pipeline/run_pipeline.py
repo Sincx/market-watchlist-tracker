@@ -19,6 +19,7 @@ Run standalone:
   python run_pipeline.py --step screen [--dry-run]
   python run_pipeline.py --step options [--dry-run]
   python run_pipeline.py --step etf [--dry-run]
+  python run_pipeline.py --step filings [--limit N] [--dry-run]
 """
 from __future__ import annotations
 
@@ -51,6 +52,11 @@ _STEP_META = {
         task_id="investor-refresh", kind="monthly", schedule_cron="0 8 5 * *",
         description="Monthly — re-syncs 13F-tracked investors (Buffett, Ackman) via investor_refresh.py",
         entry_point="run_pipeline.py --step investors",
+    ),
+    "filings": dict(
+        task_id="filings-refresh", kind="daily", schedule_cron="45 8 * * *",
+        description="Daily — gradual SEC EDGAR fundamentals fill + forward filing calendar + DCF/book valuations (filings.py, valuation.py)",
+        entry_point="run_pipeline.py --step filings",
     ),
 }
 
@@ -109,12 +115,25 @@ def _run_investors(dry_run: bool) -> str:
     return "success: " + ", ".join(_summarize_investor_result(r) for r in results)
 
 
+def _run_filings(dry_run: bool, limit: int | None) -> str:
+    import filings
+    import valuation
+    s = filings.refresh(limit=limit or filings.DEFAULT_DAILY_LIMIT, dry_run=dry_run)
+    if dry_run:
+        return "dry-run"
+    v = valuation.run()
+    return (f"success: {s['checked']} checked, {s['new_filings']} new filings, {s['facts_rows']} facts "
+            f"({s['facts_tickers']} tickers), {s['degraded']} degraded, {s['errors']} errors; "
+            f"{v['valued']} valued ({v['dcf']} dcf)")
+
+
 _RUNNERS = {
     "fundamentals": lambda a: _run_fundamentals(a.dry_run, a.limit, a.exchange),
     "screen": lambda a: _run_screen(a.dry_run),
     "options": lambda a: _run_options(a.dry_run),
     "etf": lambda a: _run_etf(a.dry_run),
     "investors": lambda a: _run_investors(a.dry_run),
+    "filings": lambda a: _run_filings(a.dry_run, a.limit),
 }
 
 
@@ -144,7 +163,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--step", required=True, choices=list(_STEP_META.keys()))
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--limit", type=int, default=None, help="fundamentals step only")
+    parser.add_argument("--limit", type=int, default=None, help="fundamentals / filings steps only")
     parser.add_argument("--exchange", choices=["US", "UK", "EU"], default=None, help="fundamentals step only")
     args = parser.parse_args()
     run_step(args.step, args)

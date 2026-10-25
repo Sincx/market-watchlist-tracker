@@ -53,8 +53,9 @@ def upsert(
     Returns the row count written.
 
     **Column-preserving by default (changed 2026-10-19).** Each row only
-    touches the columns it actually carries as keys: INSERT ... ON CONFLICT
-    (primary key) DO UPDATE SET <just those columns>. A column a row does
+    touches the columns it actually carries as keys (an UPDATE of just those
+    columns for an existing row, an INSERT for a new one — see the comment in the
+    body for why not ON CONFLICT). A column a row does
     NOT mention is left exactly as it is on an existing row (and defaults to
     NULL on a brand-new one). A key that IS present with value None is
     written as NULL — "absent" and "explicitly NULL" are different things.
@@ -89,33 +90,48 @@ def upsert(
     if not pk:
         raise ValueError(f"upsert: table {table!r} has no primary key — pass replace=True to use INSERT OR REPLACE")
 
-    sql_cache: dict[tuple[str, ...], str] = {}
+    # Two statements per row, run in the same batch (one transaction):
+    #   1. UPDATE <table> SET <only the row's own non-key columns> WHERE <pk>
+    #      — touches an existing row, does nothing if there isn't one;
+    #   2. INSERT INTO <table> (<the row's columns>) SELECT ... WHERE NOT EXISTS
+    #      (<pk match>) — creates the row only if it's genuinely new.
+    # Not the more obvious INSERT ... ON CONFLICT DO UPDATE: SQLite checks NOT
+    # NULL on the proposed row BEFORE it looks for a key conflict, so a partial
+    # row (e.g. just {ticker, exchange, cik}) aimed at an existing row whose
+    # table has any NOT NULL column the partial row omits fails outright —
+    # found 2026-10-25, and it would have broken investor_refresh's
+    # existing-universe-row path. With this shape a partial row works on an
+    # existing row, while a partial row for a NEW row still fails loudly on the
+    # insert (a new row must be complete) rather than being silently skipped.
+    shape_cache: dict[tuple[str, ...], tuple[str | None, str, list[str]]] = {}
     statements = []
     for row in rows:
         keys = tuple(columns) if columns is not None else tuple(row.keys())
         missing = [k for k in pk if k not in keys or row.get(k) is None]
         if missing:
             raise ValueError(f"upsert: row for {table!r} is missing primary-key column(s) {missing}: {dict(row)}")
-        sql = sql_cache.get(keys)
-        if sql is None:
-            col_list = ", ".join(keys)
-            placeholders = ", ".join(f":{c}" for c in keys)
+        shape = shape_cache.get(keys)
+        if shape is None:
             update_cols = [c for c in keys if c not in pk]
-            if update_cols:
-                on_conflict = "DO UPDATE SET " + ", ".join(f"{c} = excluded.{c}" for c in update_cols)
-            else:
-                on_conflict = "DO NOTHING"
-            sql = (f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
-                   f"ON CONFLICT({', '.join(pk)}) {on_conflict}")
-            sql_cache[keys] = sql
-        statements.append(libsql_client.Statement(sql, {c: row.get(c) for c in keys}))
+            where = " AND ".join(f"{k} = :{k}" for k in pk)
+            update_sql = (f"UPDATE {table} SET " + ", ".join(f"{c} = :{c}" for c in update_cols) + f" WHERE {where}"
+                          if update_cols else None)
+            insert_sql = (f"INSERT INTO {table} ({', '.join(keys)}) "
+                          f"SELECT {', '.join(f':{c}' for c in keys)} "
+                          f"WHERE NOT EXISTS (SELECT 1 FROM {table} WHERE {where})")
+            shape = (update_sql, insert_sql, update_cols)
+            shape_cache[keys] = shape
+        update_sql, insert_sql, update_cols = shape
+        if update_sql:
+            statements.append(libsql_client.Statement(
+                update_sql, {c: row.get(c) for c in [*update_cols, *pk]}))
+        statements.append(libsql_client.Statement(insert_sql, {c: row.get(c) for c in keys}))
 
-    written = 0
-    for i in range(0, len(statements), batch_size):
-        chunk = statements[i : i + batch_size]
-        client.batch(chunk)
-        written += len(chunk)
-    return written
+    # batch_size counts ROWS, so it's up to 2x as many statements per request.
+    per_request = batch_size * 2
+    for i in range(0, len(statements), per_request):
+        client.batch(statements[i : i + per_request])
+    return len(rows)
 
 
 def _insert_or_replace(client, table, rows, columns, batch_size) -> int:

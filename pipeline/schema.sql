@@ -383,3 +383,124 @@ SELECT ticker, exchange,
        COUNT(DISTINCT investor_id) AS investor_count
 FROM v_ticker_investor_positions
 GROUP BY ticker, exchange;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Master spec Phase 17 — valuation engine (DCF fair value now; IV15 and
+-- book/tangible book value in the same table). Added via live ALTER/CREATE
+-- 2026-10-25. US-listed (SEC EDGAR) tickers only for now.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Raw statement figures, mirrored onto fundamentals' latest row for convenience
+-- (filings.py derive step). valuation.py does NOT read these — it reads
+-- financial_statement_facts directly, because fundamentals_refresh.py writes a
+-- NEW fundamentals row each month (as_of_date is part of the PK), and that row
+-- starts with these columns NULL until the next derive pass.
+-- ALTER TABLE fundamentals ADD COLUMN revenue REAL, ebit REAL, net_income REAL,
+--   operating_cash_flow REAL, capex REAL, sbc_expense REAL, total_debt REAL,
+--   cash_and_equivalents REAL, shares_diluted REAL, buyback_dollars REAL,
+--   dividends_paid REAL,          -- not in the original spec: IV15's dividend-discount leg needs it
+--   stockholders_equity REAL, goodwill_and_intangibles REAL;
+-- ALTER TABLE universe ADD COLUMN cik TEXT;   -- SEC CIK (zero-padded 10 digits), set by filings.py
+
+-- One row per curated XBRL concept per reported period, fetched ONCE and kept.
+-- DEVIATES from the spec's PK (ticker, exchange, fiscal_year, fiscal_period,
+-- concept): SEC companyfacts tags every figure in a filing — including the
+-- prior-period comparatives that filing re-reports — with the FILING's own
+-- fy/fp, so several distinct periods share one (fy, fp) and would collide.
+-- Keyed by the period itself instead; when the same (concept, period_end) is
+-- reported more than once (original + restatement + later comparatives) the
+-- latest-filed value wins. Only annual-length flows (350-380 days) and
+-- balance-sheet instants are kept: quarterly/YTD flows are ambiguous and the
+-- valuation models don't need them.
+CREATE TABLE financial_statement_facts (
+    ticker TEXT NOT NULL, exchange TEXT NOT NULL,
+    concept TEXT NOT NULL,            -- us-gaap tag, e.g. 'NetIncomeLoss'; plus two yfinance pseudo-facts
+                                      -- per fiscal year ('AvgMarketPrice', 'SplitRatioInPeriod', price_history.py)
+    period_end TEXT NOT NULL,
+    period_start TEXT,                -- NULL for balance-sheet instants
+    value REAL, unit TEXT,            -- 'USD' | 'shares'
+    fiscal_year INTEGER,              -- calendar year of period_end (not the company's own FY label)
+    fiscal_period TEXT,               -- 'FY' for annual flows / year-end instants, else 'Q'
+    form_type TEXT, filed_date TEXT, accession_number TEXT,
+    source TEXT DEFAULT 'sec_edgar', fetched_at TEXT,
+    PRIMARY KEY (ticker, exchange, concept, period_end)
+);
+
+-- Every periodic report (10-K/10-Q/20-F/40-F) discovered for a ticker.
+-- facts_fetched flips to 1 only once that accession's figures are confirmed
+-- present in financial_statement_facts.
+CREATE TABLE sec_filings (
+    ticker TEXT NOT NULL, exchange TEXT NOT NULL, cik TEXT,
+    form_type TEXT NOT NULL, period_end TEXT,
+    filed_date TEXT NOT NULL, accession_number TEXT NOT NULL,
+    facts_fetched INTEGER DEFAULT 0,
+    discovered_at TEXT, fetched_at TEXT,
+    PRIMARY KEY (ticker, exchange, accession_number)
+);
+
+-- Per-ticker state for the daily incremental fill AND the forward filing
+-- calendar (one row per ticker — the spec's per-filing next_expected_date
+-- column lives here instead, since it's per-ticker state, not per-filing).
+-- next_expected_date = the next fiscal period end (from SEC's fiscalYearEnd)
+-- plus that company's own median historical filing lag for that form type;
+-- an estimate for scheduling checks and for showing what's coming, not a
+-- promise of the real date.
+CREATE TABLE filings_calendar (
+    ticker TEXT NOT NULL, exchange TEXT NOT NULL, cik TEXT,
+    fiscal_year_end TEXT,             -- 'MMDD' from SEC submissions
+    last_report_date TEXT, last_form TEXT, last_filed_date TEXT,
+    next_period_end TEXT, next_expected_form TEXT, next_expected_date TEXT,
+    last_checked_at TEXT,             -- last time submissions were polled
+    last_facts_at TEXT,               -- last time companyfacts were pulled
+    facts_pending INTEGER DEFAULT 0,  -- a new filing is known but its facts aren't in yet
+    PRIMARY KEY (ticker, exchange)
+);
+
+CREATE TABLE valuations (
+    run_date TEXT, ticker TEXT, exchange TEXT,
+    method TEXT,                 -- 'dcf_fair_value' | 'dcf_sbc_adjusted' | 'burry_iv15' | 'book_value' | 'tangible_book_value'
+    fair_value REAL,             -- per share, ticker's trading currency
+    discount_rate REAL, terminal_growth_rate REAL, exit_multiple REAL,
+    horizon_years INTEGER, moat_tier TEXT,
+    inputs_json TEXT,            -- full audit trail of every input/assumption
+    confidence TEXT,             -- 'high' | 'medium' | 'low'
+    computed_at TEXT,
+    PRIMARY KEY (run_date, ticker, exchange, method)
+);
+
+CREATE VIEW v_valuations_latest AS
+SELECT v.*, p.close AS current_price,
+       ROUND((v.fair_value - p.close) / v.fair_value * 100, 1) AS discount_pct
+FROM valuations v
+JOIN prices p ON p.ticker = v.ticker AND p.exchange = v.exchange
+WHERE v.fair_value IS NOT NULL
+  AND v.run_date = (SELECT MAX(v2.run_date) FROM valuations v2
+                     WHERE v2.ticker = v.ticker AND v2.exchange = v.exchange AND v2.method = v.method)
+  AND p.date = (SELECT MAX(p2.date) FROM prices p2 WHERE p2.ticker = v.ticker AND p2.exchange = v.exchange);
+
+CREATE VIEW v_screener_valuations AS
+SELECT ticker, exchange,
+    MAX(CASE WHEN method='dcf_fair_value' THEN fair_value END)   AS dcf_fair_value,
+    MAX(CASE WHEN method='dcf_fair_value' THEN discount_pct END) AS dcf_discount_pct,
+    MAX(CASE WHEN method='dcf_fair_value' THEN confidence END)   AS dcf_confidence,
+    MAX(CASE WHEN method='dcf_sbc_adjusted' THEN fair_value END)   AS dcf_sbc_fair_value,
+    MAX(CASE WHEN method='dcf_sbc_adjusted' THEN discount_pct END) AS dcf_sbc_discount_pct,
+    MAX(CASE WHEN method='dcf_sbc_adjusted' THEN confidence END)   AS dcf_sbc_confidence,
+    MAX(CASE WHEN method='dcf_sbc_adjusted' THEN json_extract(inputs_json, '$.pooled_delta_e') END)    AS sbc_delta_e,
+    MAX(CASE WHEN method='dcf_sbc_adjusted' THEN json_extract(inputs_json, '$.gaap_overstatement') END) AS sbc_gaap_overstatement,
+    MAX(CASE WHEN method='burry_iv15' THEN fair_value END)       AS iv15_value,
+    MAX(CASE WHEN method='burry_iv15' THEN discount_pct END)     AS iv15_discount_pct,
+    MAX(CASE WHEN method='book_value' THEN fair_value END)       AS book_value_per_share,
+    MAX(CASE WHEN method='tangible_book_value' THEN fair_value END)   AS tangible_book_value_per_share,
+    MAX(CASE WHEN method='tangible_book_value' THEN discount_pct END) AS tangible_book_value_discount_pct
+FROM v_valuations_latest
+GROUP BY ticker, exchange;
+
+-- What's coming: every tracked ticker's next expected periodic filing, soonest first.
+CREATE VIEW v_filings_calendar_upcoming AS
+SELECT ticker, exchange, next_expected_form, next_period_end, next_expected_date,
+       CAST(julianday(next_expected_date) - julianday('now') AS INTEGER) AS days_until,
+       last_report_date, last_form
+FROM filings_calendar
+WHERE next_expected_date IS NOT NULL
+ORDER BY next_expected_date;
