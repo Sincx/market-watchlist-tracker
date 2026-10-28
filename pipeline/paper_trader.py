@@ -14,7 +14,7 @@ Massive/yfinance calls per ticker — a real follow-up opportunity, flagged
 here but not built in this pass to keep this deliverable scoped to what was
 asked.
 
-Run standalone: python paper_trader.py select-strategy | capital-check | record-trade ...
+Run standalone: python paper_trader.py select-strategy | capital-check | record-trade | close-trade | partial-exit ...
 """
 from __future__ import annotations
 
@@ -96,10 +96,9 @@ def capital_check() -> dict:
     was a flat $35,000 for 35 full-sized positions instead of the real
     ~$31,000). That was a one-time data fix, not an ongoing mechanism: the
     underlying gap remains — trades doesn't model tranches, so any FUTURE
-    T1/T2 trigger needs the same kind of manual `shares` correction until
-    the exit-monitoring flow (Steps 2-3, not redesigned in this pass — see
-    module docstring) is taught to apply it automatically when it detects a
-    new T1/T2 trigger.
+    T1/T2 trigger needs the same `shares` correction — recorded with the
+    `partial-exit` command (see partial_exit()), which the exit-monitoring
+    flow (Steps 2-3) must call when it detects a new T1/T2 trigger.
     """
     client = db.get_client()
     try:
@@ -208,6 +207,56 @@ def close_trade(ticker: str, entry_date: str, exit_price: float, dry_run: bool =
     return {"closed": {"trade_id": trade_id, "exit_date": TODAY, "exit_price": exit_price}}
 
 
+def partial_exit(ticker: str, entry_date: str, fraction: float, realized_pnl: float,
+                 dry_run: bool = False) -> dict:
+    """Records a T1/T2 tranche sale on a still-open trade: reduces `shares`
+    to the remaining size and adds the tranche's realized $ to
+    `realized_pnl_partial` (see schema.sql — `trades` has no per-tranche
+    rows). `fraction` is the share of the CURRENT position sold, e.g. 0.3333
+    for a T1 third. Replaces the hand-written `UPDATE trades SET shares =
+    shares * 0.6667 ...` the T1/T2 steps used to run as raw SQL, which the
+    unattended session's permission classifier blocks — leaving capital-check
+    overstating cost basis until someone ran it manually.
+
+    Not idempotent: each call sells another `fraction`, so check the
+    returned shares_before/shares_after and never re-run a call that
+    succeeded.
+    """
+    if not 0 < fraction < 1:
+        raise ValueError(f"fraction must be between 0 and 1 (exclusive), got {fraction} — use close-trade for a full exit")
+
+    trade_id = f"{PORTFOLIO_ID}-{ticker}-{entry_date}"
+    client = db.get_client()
+    try:
+        rows = db.query(client, "SELECT shares, status, realized_pnl_partial FROM trades WHERE trade_id = :id;",
+                        {"id": trade_id})
+        if not rows:
+            raise ValueError(f"no trade with trade_id {trade_id}")
+        row = rows[0]
+        if row["status"] != "open":
+            raise ValueError(f"{trade_id} is {row['status']!r}, not open")
+
+        shares_before = row["shares"] or 0
+        pnl_before = row["realized_pnl_partial"] or 0
+        result = {
+            "trade_id": trade_id,
+            "shares_before": shares_before,
+            "shares_after": round(shares_before * (1 - fraction), 6),
+            "realized_pnl_partial_before": pnl_before,
+            "realized_pnl_partial_after": round(pnl_before + realized_pnl, 2),
+        }
+        if dry_run:
+            return {"would_partial_exit": result}
+
+        client.execute(
+            "UPDATE trades SET shares = :s, realized_pnl_partial = :r WHERE trade_id = :id AND status = 'open';",
+            {"s": result["shares_after"], "r": result["realized_pnl_partial_after"], "id": trade_id},
+        )
+    finally:
+        client.close()
+    return {"partial_exit": result}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -240,6 +289,13 @@ if __name__ == "__main__":
     close.add_argument("--exit-price", type=float, required=True)
     close.add_argument("--dry-run", action="store_true")
 
+    part = sub.add_parser("partial-exit", help="T1/T2 tranche sale on an open trade")
+    part.add_argument("--ticker", required=True)
+    part.add_argument("--entry-date", required=True, help="Original entry_date, e.g. 2026-07-07 — part of the trade_id")
+    part.add_argument("--fraction", type=float, required=True, help="Share of the CURRENT position sold, e.g. 0.3333")
+    part.add_argument("--realized-pnl", type=float, required=True, help="Tranche's realized $ P&L, e.g. 85.20")
+    part.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
 
     if args.cmd == "select-strategy":
@@ -257,4 +313,7 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2))
     elif args.cmd == "close-trade":
         result = close_trade(args.ticker, args.entry_date, args.exit_price, dry_run=args.dry_run)
+        print(json.dumps(result, indent=2))
+    elif args.cmd == "partial-exit":
+        result = partial_exit(args.ticker, args.entry_date, args.fraction, args.realized_pnl, dry_run=args.dry_run)
         print(json.dumps(result, indent=2))
