@@ -118,7 +118,7 @@ def _run_investors(dry_run: bool) -> str:
 def _run_filings(dry_run: bool, limit: int | None) -> str:
     import filings
     import valuation
-    s = filings.refresh(limit=limit or filings.DEFAULT_DAILY_LIMIT, dry_run=dry_run)
+    s = filings.refresh(limit=limit or filings.DEFAULT_DAILY_LIMIT, scope="all", dry_run=dry_run)
     if dry_run:
         return "dry-run"
     v = valuation.run()

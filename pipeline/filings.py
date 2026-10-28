@@ -472,7 +472,8 @@ def process_ticker(client, sec: SecClient, t: dict, cik: str | None, today: date
     ticker, exchange = t["ticker"], t["exchange"]
     res = {"ticker": ticker, "status": "ok", "message": None, "new_filings": 0, "facts_rows": 0, "touched": False}
     if not cik:
-        res.update(status="degraded", message="ticker not in SEC company_tickers (ETF/ADR/OTC/non-filer?)")
+        # an intentional exclusion, not a failure: it cannot resolve itself, so 'degraded' would only inflate the still-failing count
+        res.update(status="ok", message="n/a: not in SEC company_tickers (ETF/ADR/OTC/non-filer)")
         db.upsert(client, "filings_calendar", [{"ticker": ticker, "exchange": exchange, "last_checked_at": now_iso, "facts_pending": 0}])
         return res
 
@@ -508,7 +509,7 @@ def process_ticker(client, sec: SecClient, t: dict, cik: str | None, today: date
         cf = sec.get_json(FACTS_URL.format(cik=cik))
         rows, seen = extract_facts(cf or {}, ticker, exchange, today, now_iso)
         if not rows:
-            res.update(status="degraded", message="no us-gaap facts (IFRS/foreign filer, or no XBRL)")
+            res.update(status="ok", message="n/a: no us-gaap facts (IFRS/foreign filer, or no XBRL)")
         else:
             db.upsert(client, "financial_statement_facts", rows)
             res["facts_rows"], res["touched"], last_facts_at = len(rows), True, now_iso
@@ -532,7 +533,9 @@ def process_ticker(client, sec: SecClient, t: dict, cik: str | None, today: date
     if cal:
         cal_row.update(cal)
     db.upsert(client, "filings_calendar", [cal_row])
-    db.upsert(client, "universe", [{"ticker": ticker, "exchange": exchange, "cik": cik}])
+    # UPDATE, not upsert: an explicit --ticker outside the universe must not create a half-empty row
+    db.query(client, "UPDATE universe SET cik = :c WHERE ticker = :t AND exchange = :e;",
+             {"c": cik, "t": ticker, "e": exchange})
     return res
 
 
