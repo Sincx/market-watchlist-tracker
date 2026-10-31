@@ -117,13 +117,19 @@ def _run_investors(dry_run: bool) -> str:
 
 def _run_filings(dry_run: bool, limit: int | None) -> str:
     import filings
+    import filings_eu
     import valuation
     s = filings.refresh(limit=limit or filings.DEFAULT_DAILY_LIMIT, scope="all", dry_run=dry_run)
+    try:   # UK/EU statements from Yahoo; a Yahoo outage must not stop the SEC fill or the valuations below
+        e = filings_eu.refresh(limit=limit or filings_eu.DEFAULT_DAILY_LIMIT, dry_run=dry_run)
+        eu = f"; EU/UK {e['checked']} checked ({e['facts_tickers']} with statements, {e['n_a']} n/a, {e['errors']} errors)"
+    except Exception as ex:
+        eu = f"; EU/UK fill failed ({type(ex).__name__}: {str(ex)[:80]})"
     if dry_run:
         return "dry-run"
     v = valuation.run()
     return (f"success: {s['checked']} checked, {s['new_filings']} new filings, {s['facts_rows']} facts "
-            f"({s['facts_tickers']} tickers), {s['degraded']} degraded, {s['errors']} errors; "
+            f"({s['facts_tickers']} tickers), {s['degraded']} degraded, {s['errors']} errors{eu}; "
             f"{v['valued']} valued ({v['dcf']} dcf)")
 
 

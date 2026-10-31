@@ -60,6 +60,7 @@ import libsql_client
 import data_quality as dq
 import db
 import filings
+import filings_eu
 import owners_earnings as oe
 
 TERMINAL_GROWTH = 0.025
@@ -76,6 +77,19 @@ OWN_METHODS = ("dcf_fair_value", "dcf_sbc_adjusted", "book_value", "tangible_boo
 FOREIGN_FORMS = {"20-F", "40-F"}
 EXTREME_OVERSTATEMENT = 0.75    # see _sbc_adjusted_dcf()
 DCF_EXCLUDED_SECTORS = {"Financials", "Financial Services", "Real Estate", "Utilities"}
+# UK/EU rows carry ICB-style sector names ("Banks", "Non-life Insurance", "Investment Trusts", ...), so the
+# US set above misses them; a keyword match covers the variants (Life/Non-life/Nonlife, REIT spellings, ...).
+DCF_EXCLUDED_KEYWORDS = ("bank", "insurance", "investment trust", "investment bank", "brokerage", "financial",
+                         "finance and credit", "closed end", "equity investments", "collective investments",
+                         "hedge fund", "real estate", "utilit", "electricity")
+NON_US = ("UK", "EU")
+
+
+def dcf_excluded(sector: str | None) -> bool:
+    """Sectors where a cash-flow DCF is the wrong lens (lenders, insurers, funds, property, regulated utilities). Pure."""
+    if not sector:
+        return False
+    return sector in DCF_EXCLUDED_SECTORS or any(k in sector.lower() for k in DCF_EXCLUDED_KEYWORDS)
 
 
 # ── pure maths ───────────────────────────────────────────────────────────────
@@ -184,7 +198,7 @@ def compute_valuations(fin: dict, market_cap: float | None, sector: str | None, 
             out["tangible"] = {"fair_value": (eq - gi) / shares,
                                "inputs": {"stockholders_equity": eq, "goodwill_and_intangibles": gi, "shares_diluted": shares}}
 
-    if sector in DCF_EXCLUDED_SECTORS:
+    if dcf_excluded(sector):
         out["dcf_note"] = f"dcf n/a: {sector} (cash-flow DCF is the wrong lens; book value written)"
         return out
 
@@ -313,7 +327,11 @@ def _latest_context(client, ticker: str, exchange: str) -> dict:
                          "ORDER BY as_of_date DESC LIMIT 1;", {"t": ticker, "e": exchange})
     p = db.query(client, "SELECT close, date FROM prices WHERE ticker = :t AND exchange = :e "
                          "ORDER BY date DESC LIMIT 1;", {"t": ticker, "e": exchange})
-    return {"mkt_cap": (f[0]["mkt_cap"] if f else None), "sector": (f[0]["sector"] if f else None),
+    sector = f[0]["sector"] if f else None
+    if not sector and exchange in NON_US:   # UK/EU fundamentals often lack a sector; the universe label is ICB-style
+        u = db.query(client, "SELECT sector FROM universe WHERE ticker = :t AND exchange = :e;", {"t": ticker, "e": exchange})
+        sector = (u[0]["sector"] or None) if u else None
+    return {"mkt_cap": (f[0]["mkt_cap"] if f else None), "sector": sector,
             "price": (p[0]["close"] if p else None), "price_date": (p[0]["date"] if p else None)}
 
 
@@ -321,7 +339,7 @@ def _due(client, all_: bool, tickers: list[str] | None, today: date) -> list[dic
     cands = db.query(client, """
         SELECT c.ticker, c.exchange, c.last_facts_at, c.last_form,
                (SELECT MAX(v.computed_at) FROM valuations v WHERE v.ticker = c.ticker AND v.exchange = c.exchange) AS last_valued
-        FROM filings_calendar c WHERE c.last_facts_at IS NOT NULL AND c.exchange = 'US';
+        FROM filings_calendar c WHERE c.last_facts_at IS NOT NULL AND c.exchange IN ('US', 'UK', 'EU');
     """)
     if tickers:
         want = {t.upper() for t in tickers}
@@ -341,6 +359,7 @@ def run(all_: bool = False, tickers: list[str] | None = None, dry_run: bool = Fa
     client = db.get_client()
     stats = {"considered": 0, "valued": 0, "dcf": 0, "dcf_sbc": 0, "excluded": 0, "degraded": 0}
     try:
+        rates = filings_eu.load_rates(client)
         val_rows, dq_rows, stale = [], [], []   # stale: (ticker, exchange, method) this run no longer produces
         for c in _due(client, all_, tickers, today):
             t, ex = c["ticker"], c["exchange"]
@@ -354,7 +373,28 @@ def run(all_: bool = False, tickers: list[str] | None = None, dry_run: bool = Fa
                 print(f"  {t:6s} skipped: foreign private issuer ({c['last_form']})")
                 continue
             ctx = _latest_context(client, t, ex)
-            res = compute_valuations(filings.load_financials(client, t, ex), ctx["mkt_cap"], ctx["sector"], today, ctx["price"])
+            src = "yfinance" if ex in NON_US else "sec_edgar"
+            if ex in NON_US:
+                fin = filings_eu.load_financials(client, t, ex, rates)
+                if fin["fx"].get("factor") is None:
+                    stats["degraded"] += 1
+                    dq_rows.append({"ticker": t, "exchange": ex, "data_type": "valuation", "status": "degraded", "source": src,
+                                    "error": f"cannot convert to trading currency: {fin['fx'].get('error')}"})
+                    print(f"  {t:6s} skipped: {fin['fx'].get('error')}")
+                    continue
+                if ctx["mkt_cap"] is None:   # fundamentals lack one for most EU names: price x shares, in USD for the tier
+                    sh = max(sorted(fin["annual"]), default=None)
+                    sh = fin["annual"][sh].get("shares_outstanding") if sh else None
+                    to_usd = filings_eu.fx_factor(fin["fx"]["to"], "USD", rates)
+                    if sh and ctx["price"] and to_usd:
+                        ctx["mkt_cap"] = sh * ctx["price"] * to_usd
+            else:
+                fin = filings.load_financials(client, t, ex)
+            res = compute_valuations(fin, ctx["mkt_cap"], ctx["sector"], today, ctx["price"])
+            if ex in NON_US:   # audit trail: what the reported figures were converted by
+                for key in ("dcf", "dcf_sbc", "book", "tangible"):
+                    if res.get(key):
+                        res[key]["inputs"]["fx"] = fin["fx"]
 
             def add(method, d, rate=None, conf=None):
                 val_rows.append({
@@ -380,11 +420,11 @@ def run(all_: bool = False, tickers: list[str] | None = None, dry_run: bool = Fa
                 if res["dcf_note"]:
                     stats["excluded"] += 1
                 dq_rows.append({"ticker": t, "exchange": ex, "data_type": "valuation", "status": "ok",
-                                "source": "sec_edgar", "error": res["dcf_note"]})
+                                "source": src, "error": res["dcf_note"]})
             else:
                 stats["degraded"] += 1
                 dq_rows.append({"ticker": t, "exchange": ex, "data_type": "valuation", "status": "degraded",
-                                "source": "sec_edgar", "error": res["dcf_note"]})
+                                "source": src, "error": res["dcf_note"]})
             made = {r["method"] for r in val_rows if r["ticker"] == t and r["exchange"] == ex}
             stale += [(t, ex, m) for m in OWN_METHODS if m not in made]
             fv = res["dcf"]["fair_value"] if res["dcf"] else None
