@@ -480,6 +480,13 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     # Verified live via yfinance — PII resolves to "Polaris Inc." (NYSE, USD),
     # last price matches the $59.41 entry.
     ("PII", "US", "PII", "USD"),       # Polaris Inc.
+    # Added 2026-10-31 — Recommended Trades holds TMV (open) and AF (closed)
+    # that were only covered via the STOXX 600 source; both dropped out of it
+    # on today's universe refresh and were deactivated. Pinned here so index
+    # churn can't unprice them. Verified live via yfinance: AF.PA = "Air
+    # France-KLM SA", TMV.DE = "TeamViewer SE", both EUR.
+    ("AF", "EU", "AF.PA", "EUR"),      # Air France-KLM, Euronext Paris
+    ("TMV", "EU", "TMV.DE", "EUR"),    # TeamViewer SE, Xetra
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
