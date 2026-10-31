@@ -475,6 +475,11 @@ PORTFOLIO_SPECIFIC_TICKERS = [
     # resolves to "Verisure plc" (Nasdaq Stockholm, quoted in EUR), and its
     # April-May daily ranges contain the trade's €9.91/€10.63 fills.
     ("VSURE", "EU", "VSURE.ST", "EUR"),  # Verisure plc, Nasdaq Stockholm (EUR-quoted)
+    # Added 2026-10-31 — found by check_untracked_instruments.py: Paper
+    # Trading (P1) opened PII 2026-10-30 (strategy D, Polaris Q3 beat thesis).
+    # Verified live via yfinance — PII resolves to "Polaris Inc." (NYSE, USD),
+    # last price matches the $59.41 entry.
+    ("PII", "US", "PII", "USD"),       # Polaris Inc.
 ]
 
 # Benchmark tickers (index_membership='BENCHMARK') — reference prices tracked
